@@ -1,0 +1,82 @@
+[
+  {
+    "question": "重邮校训是什么？",
+    "expected": "修德、博学、求实、创新"
+  },
+  {
+    "question": "图书馆周末几点关门？",
+    "expected": "21:00"
+  },
+  {
+    "question": "国家奖学金多少钱？",
+    "expected": "8000元"
+  },
+  {
+    "question": "校园卡补办要多少钱？",
+    "expected": "15元"
+  },
+  {
+    "question": "心理中心怎么预约？",
+    "expected": "拨打62461999或微信公众号"
+  },
+  {
+    "question": "快递点营业到几点？",
+    "expected": "20:00"
+  },
+  {
+    "question": "校医院周末开吗？",
+    "expected": "仅上午"
+  },
+  {
+    "question": "一食堂主打什么菜？",
+    "expected": "川菜"
+  },
+  {
+    "question": "教务处电话多少？",
+    "expected": "023-62461114"
+  },
+  {
+    "question": "宿舍有空调吗？",
+    "expected": "有"
+  },
+  {
+    "question": "重邮校长叫什么？",
+    "expected": "无法确定"
+  },
+  {
+    "question": "2025年考研分数线？",
+    "expected": "无法确定"
+  },
+  {
+    "question": "食堂有奶茶店吗？",
+    "expected": "无法确定"
+  },
+  {
+    "question": "重邮有几个校区？",
+    "expected": "无法确定"
+  },
+  {
+    "question": "计算机学院院长是谁？",
+    "expected": "无法确定"
+  },
+  {
+    "question": "校园网密码怎么改？",
+    "expected": "无法确定"
+  },
+  {
+    "question": "重邮建校多少年？",
+    "expected": "无法确定"
+  },
+  {
+    "question": "游泳馆开放时间？",
+    "expected": "无法确定"
+  },
+  {
+    "question": "重邮在哪个省？",
+    "expected": "无法确定"
+  },
+  {
+    "question": "今天天气怎么样？",
+    "expected": "无法确定"
+  }
+]
