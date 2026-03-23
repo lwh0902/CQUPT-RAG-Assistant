@@ -1,82 +1,86 @@
 [
   {
     "question": "重邮校训是什么？",
-    "expected": "修德、博学、求实、创新"
+    "expected": "修德、博学、求实、创新",
+    "type": "fact",
+    "must_include": ["修德", "博学", "求实", "创新"],
+    "must_not_include": []
   },
   {
-    "question": "图书馆周末几点关门？",
-    "expected": "21:00"
+    "question": "重邮的人才培养目标是什么？",
+    "expected": "培养信念坚定、志存高远、德智体美劳全面发展，具有扎实专业知识、持续发展能力、执着行业情怀的高素质创新型人才。",
+    "type": "fact",
+    "must_include": ["德智体美劳全面发展", "高素质创新型人才"],
+    "must_not_include": []
   },
   {
-    "question": "国家奖学金多少钱？",
-    "expected": "8000元"
+    "question": "学生不能按时参加教育教学计划规定的活动时应该怎么办？",
+    "expected": "应当事先请假并获得批准。",
+    "type": "rule",
+    "must_include": ["事先请假", "获得批准"],
+    "must_not_include": ["可以直接缺席"]
   },
   {
-    "question": "校园卡补办要多少钱？",
-    "expected": "15元"
+    "question": "学生严重违反考核纪律或者作弊后，该课程成绩如何处理？",
+    "expected": "该课程考核成绩记为无效。",
+    "type": "rule",
+    "must_include": ["成绩记为无效"],
+    "must_not_include": ["成绩有效"]
   },
   {
-    "question": "心理中心怎么预约？",
-    "expected": "拨打62461999或微信公众号"
+    "question": "哪些处分在教育表现较好后可以获得补考或者重修机会？",
+    "expected": "给予警告、严重警告、记过及留校察看处分的，经教育表现较好，可以对该课程给予补考或者重修机会。",
+    "type": "multi_condition",
+    "must_include": ["警告", "严重警告", "记过", "留校察看", "补考或者重修机会"],
+    "must_not_include": []
   },
   {
-    "question": "快递点营业到几点？",
-    "expected": "20:00"
+    "question": "哪些情形下学生不得转学？",
+    "expected": "入学未满一学期或者毕业前一年的、高考成绩低于拟转入学校相关专业同一生源地相应年份录取成绩的、由低学历层次转为高学历层次的、以定向就业招生录取的、无正当转学理由的等情形不得转学。",
+    "type": "multi_condition",
+    "must_include": ["入学未满一学期", "毕业前一年", "无正当转学理由"],
+    "must_not_include": []
   },
   {
-    "question": "校医院周末开吗？",
-    "expected": "仅上午"
+    "question": "学生休学期间享受在校学生待遇吗？",
+    "expected": "学校应为其保留学籍，但不享受在校学习学生待遇。",
+    "type": "rule",
+    "must_include": ["保留学籍", "不享受在校学习学生待遇"],
+    "must_not_include": ["继续享受在校学习学生待遇"]
   },
   {
-    "question": "一食堂主打什么菜？",
-    "expected": "川菜"
+    "question": "学生未经批准连续多久未参加学校规定的教学活动，学校可予退学处理？",
+    "expected": "连续两周。",
+    "type": "fact",
+    "must_include": ["连续两周"],
+    "must_not_include": []
   },
   {
-    "question": "教务处电话多少？",
-    "expected": "023-62461114"
+    "question": "国家奖学金的奖励标准是多少？",
+    "expected": "每人每年10000元。",
+    "type": "fact",
+    "must_include": ["10000元"],
+    "must_not_include": ["8000元"]
   },
   {
-    "question": "宿舍有空调吗？",
-    "expected": "有"
+    "question": "国家奖学金主要奖励哪些学生？",
+    "expected": "用于奖励我校全日制本科（含第二学士学位）二年级以上（含二年级）的特别优秀的在校学生。",
+    "type": "rule",
+    "must_include": ["全日制本科", "二年级以上", "特别优秀"],
+    "must_not_include": []
   },
   {
-    "question": "重邮校长叫什么？",
-    "expected": "无法确定"
+    "question": "学生对学校复查决定仍有异议时，多久内可以向省级教育行政部门提出书面申诉？",
+    "expected": "在接到学校复查决定书之日起15日内。",
+    "type": "fact",
+    "must_include": ["15日内"],
+    "must_not_include": ["30日内"]
   },
   {
-    "question": "2025年考研分数线？",
-    "expected": "无法确定"
-  },
-  {
-    "question": "食堂有奶茶店吗？",
-    "expected": "无法确定"
-  },
-  {
-    "question": "重邮有几个校区？",
-    "expected": "无法确定"
-  },
-  {
-    "question": "计算机学院院长是谁？",
-    "expected": "无法确定"
-  },
-  {
-    "question": "校园网密码怎么改？",
-    "expected": "无法确定"
-  },
-  {
-    "question": "重邮建校多少年？",
-    "expected": "无法确定"
-  },
-  {
-    "question": "游泳馆开放时间？",
-    "expected": "无法确定"
-  },
-  {
-    "question": "重邮在哪个省？",
-    "expected": "无法确定"
-  },
-  {
-    "question": "今天天气怎么样？",
-    "expected": "无法确定"
+    "question": "学生手册里有写图书馆周末几点关门吗？",
+    "expected": "无法确定",
+    "type": "refusal",
+    "must_include": [],
+    "must_not_include": ["21:00"]
   }
 ]
