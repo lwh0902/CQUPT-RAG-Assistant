@@ -1,110 +1,301 @@
-# CQUPT-RAG-Assistant
+# Enterprise Campus Knowledge Base & Tool-Orchestrated AI Agent
 
-基于重邮《学生手册（教育管理篇）2025版》PDF 构建的 RAG 问答项目。
+一个面向校园场景的知识库问答与工具调度项目，围绕学生手册知识检索、多轮会话记忆、工具调用和 Web 交互构建。项目当前基于本地 PDF 知识库、FastAPI 后端、Streamlit 前端、MySQL 会话存储与 Chroma 向量检索实现，适合作为“企业级校园知识库与工具调度 AI Agent”的课程项目、作品集项目和后续工程化演进基础。
 
-项目当前不再使用简单的 `txt` 知识库，而是固定绑定学生手册 PDF：
-- 首次运行时解析 PDF、切片并创建向量库
-- 后续运行时如果 PDF 未变化，则直接加载已有索引
-- 问答时会返回答案，并展示检索到的原始片段和参考页码
+## 项目亮点
 
-## 项目特点
+- 基于学生手册 PDF 自动构建本地向量知识库
+- 支持校园制度问答、知识检索增强生成与来源片段注入
+- 支持多轮会话上下文、长期记忆摘要沉淀与会话隔离
+- 支持模型基于 Function Calling 的工具调度
+- 内置天气查询、课表查询两个示例工具，便于后续替换成真实服务
+- 提供 FastAPI 接口与 Streamlit 聊天前端
+- 提供数据库初始化、示例数据写入、数据查询与异步评测脚本
 
-- 基于 `PyMuPDF` 读取学生手册 PDF
-- 基于 `LangChain + Chroma` 构建本地向量检索
-- 基于 `GLM-4` 生成最终回答
-- 支持“首次构建，后续加载”的索引复用
-- 支持 `asyncio` 并发评测，并发上限固定为 `3`
+## 适用场景
 
-## 当前知识来源
+- 校园知识库问答
+- 学生手册、规章制度、办事流程问答助手
+- 工具调用型智能体课程设计
+- RAG + 记忆 + 工具调度一体化 Demo
 
-项目当前唯一知识来源为本地 PDF：
+## 系统架构
 
-`学生手册（教育管理篇）2025版.pdf`
-
-默认路径配置在 [`settings.py`](/d:/ai/ai/settings.py) 中：
-
-```python
-PDF_PATH = Path(r"C:\Users\皓\Downloads\学生手册（教育管理篇）2025版.pdf")
+```text
+用户 / 前端
+   |
+   v
+Streamlit Web UI / FastAPI API
+   |
+   v
+Agent 编排层
+   |- 短期记忆：MySQL 最近多轮消息
+   |- 长期记忆：Chroma Memory 摘要检索
+   |- 知识检索：学生手册 PDF -> Chroma Vector DB
+   |- 工具调度：天气 / 课表 Function Calling
+   |
+   v
+GLM-4 生成最终回答
 ```
 
-如果你后续更换 PDF 存放位置，只需要修改这里。
+## 技术栈
 
-## 主要文件说明
+- LLM: `glm-4`
+- Embedding: 智谱 `embedding-2`
+- RAG: `LangChain + Chroma`
+- API: `FastAPI + Uvicorn`
+- Frontend: `Streamlit`
+- Database: `MySQL + SQLAlchemy`
+- Document Processing: `PyMuPDF` / `PyPDF`
 
-- [`app.py`](/d:/ai/ai/app.py)：Streamlit 页面入口
-- [`rag.py`](/d:/ai/ai/rag.py)：RAG 主流程，负责初始化、检索、问答和异步包装
-- [`pdf_loader.py`](/d:/ai/ai/pdf_loader.py)：PDF 读取与切片
-- [`vector_store.py`](/d:/ai/ai/vector_store.py)：向量库创建、加载和索引元数据管理
-- [`settings.py`](/d:/ai/ai/settings.py)：统一配置项
-- [`evaluate.py`](/d:/ai/ai/evaluate.py)：异步并发评测主模块
-- [`async.py`](/d:/ai/ai/async.py)：兼容入口，直接复用异步评测
-- [`test.py`](/d:/ai/ai/test.py)：轻量本地冒烟测试
-- [`test_cases.json`](/d:/ai/ai/test_cases.json)：学生手册评测题集
+## 核心能力
 
-## 运行前准备
+### 1. 校园知识库问答
 
-1. 安装依赖
+项目从本地学生手册 PDF 读取内容、切块、建立向量索引，并在提问时检索相关片段后交给大模型生成答案。
+
+### 2. 多层记忆机制
+
+- 短期记忆：读取当前会话最近多轮消息
+- 长期记忆：将高价值对话窗口摘要后写入 Chroma Memory
+- 知识记忆：来自学生手册 PDF 的制度知识
+
+三类上下文会在后端统一拼装，再发送给模型。
+
+### 3. 工具调度 Agent
+
+项目在聊天接口中实现了一轮工具调用闭环：
+
+1. 先让模型判断是否需要调工具
+2. 若模型返回 `tool_calls`，后端解析参数
+3. 本地执行对应工具函数
+4. 将工具结果作为 `tool` 消息回传模型
+5. 模型生成最终答案
+
+当前示例工具：
+
+- `get_weather`
+- `get_class_schedule`
+
+### 4. 基础安全与工程化处理
+
+- 对 `session_id` / `user_id` 做会话归属校验
+- 对输入做基础 Prompt 注入关键词拦截
+- 启动时自动初始化知识检索器与长期记忆向量库
+- 支持索引元数据保存与本地持久化
+
+## 项目结构
+
+```text
+.
+├─ api.py               # FastAPI 主服务，Agent 编排、记忆组装、工具调度
+├─ web.py               # Streamlit 聊天前端
+├─ rag.py               # RAG 主流程：检索、重排、上下文构建、问答
+├─ vector_store.py      # PDF 加载、切块、向量库构建与加载
+├─ settings.py          # 模型、索引、切块与路径配置
+├─ tools.py             # Function Calling 工具定义与本地实现
+├─ database.py          # MySQL 连接与数据库初始化
+├─ models.py            # SQLAlchemy ORM 模型
+├─ main.py              # 初始化数据库表结构
+├─ insert_data.py       # 写入示例会话数据
+├─ query_data.py        # 查询示例会话数据
+├─ evaluate.py          # 异步评测脚本
+├─ async.py             # evaluate.py 的兼容入口
+├─ test.py              # 本地轻量测试
+├─ test_cases.json      # 评测样例
+├─ chroma_db/           # 学生手册知识库向量索引（本地生成）
+└─ chroma_memory_db/    # 长期记忆向量索引（本地生成，不建议入库）
+```
+
+## 环境要求
+
+- Python 3.10+
+- MySQL 8+
+- 智谱 API Key
+
+## 安装依赖
 
 ```bash
-pip install streamlit PyMuPDF langchain langchain-community langchain-huggingface chromadb sentence-transformers python-dotenv zhipuai
+pip install fastapi uvicorn streamlit requests sqlalchemy pymysql PyMuPDF pypdf langchain langchain-community langchain-text-splitters chromadb python-dotenv zhipuai
 ```
 
-2. 配置环境变量
+## 环境变量配置
 
-在项目根目录创建 `.env` 文件，并写入：
+在项目根目录创建 `.env` 文件：
 
 ```env
-ZHIPU_API_KEY=你的智谱API密钥
+ZHIPU_API_KEY=your_zhipu_api_key
+MYSQL_USER=root
+MYSQL_PASSWORD=123456
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_DATABASE=cqupt_rag
 ```
 
-## 启动方式
+说明：
 
-启动 Web 问答界面：
+- `ZHIPU_API_KEY` 用于大模型与向量 Embedding
+- MySQL 变量用于会话消息和用户数据存储
+- `.env` 已被 `.gitignore` 忽略，不会被提交到 GitHub
+
+## 知识源配置
+
+项目默认会从 [settings.py](/d:/ai/ai/settings.py) 中的 `PDF_PATH` 读取学生手册 PDF。  
+如果你更换知识文档路径，修改这里即可：
+
+```python
+PDF_PATH = Path(r"C:\path\to\your\manual.pdf")
+```
+
+## 快速开始
+
+### 1. 初始化数据库
 
 ```bash
-streamlit run app.py
+python main.py
 ```
 
-运行异步评测：
+### 2. 启动后端服务
+
+```bash
+python api.py
+```
+
+默认监听：
+
+```text
+http://127.0.0.1:8000
+```
+
+### 3. 启动 Web 前端
+
+```bash
+streamlit run web.py
+```
+
+### 4. 访问聊天页面
+
+启动后可以在浏览器中与 Agent 进行对话，测试：
+
+- 校园制度问答
+- 天气查询
+- 课表查询
+- 多轮上下文与记忆效果
+
+## API 使用方式
+
+### 健康检查
+
+```bash
+curl http://127.0.0.1:8000/
+```
+
+### 聊天接口
+
+```bash
+curl -X POST http://127.0.0.1:8000/chat ^
+  -H "Content-Type: application/json" ^
+  -d "{\"user_id\":\"user_10001\",\"session_id\":\"session_10001\",\"new_message\":\"休学申请一般需要满足什么条件？\"}"
+```
+
+返回示例：
+
+```json
+{
+  "reply": "..."
+}
+```
+
+## 常用脚本
+
+### 写入示例数据
+
+```bash
+python insert_data.py
+```
+
+### 查询示例数据
+
+```bash
+python query_data.py
+```
+
+### 异步评测
 
 ```bash
 python evaluate.py
 ```
 
-运行轻量冒烟测试：
+或：
+
+```bash
+python async.py
+```
+
+### 轻量测试
 
 ```bash
 python test.py
 ```
 
-## 索引机制说明
+## RAG 检索流程
 
-项目会自动在本地生成：
+当前项目的知识检索流程是：
 
-- `chroma_db/`：向量库目录
-- `manual_index_meta.json`：索引元数据文件
+1. 读取学生手册 PDF
+2. 使用 `RecursiveCharacterTextSplitter` 切块
+3. 使用智谱 `embedding-2` 生成向量
+4. 写入本地 `Chroma`
+5. 提问时先做向量召回
+6. 再做一层轻量关键词重排
+7. 将命中片段拼入 Prompt 交给 `glm-4`
 
-启动时会自动判断：
-- 如果学生手册 PDF 没变，则直接加载已有向量库
-- 如果 PDF 发生变化，则重新构建索引
+## 记忆机制说明
 
-## 适用场景
+### 短期记忆
 
-这个项目更适合：
-- 课程设计
-- RAG 项目练习
-- 基于固定制度文件的智能问答
+从 MySQL 中读取当前会话最近多轮消息，作为即时上下文。
 
-当前版本特别适合问答：
-- 奖学金
-- 学籍管理
-- 转学、休学、退学
-- 纪律处分
-- 学生申诉
-- 学业与毕业要求
+### 长期记忆
 
-## 注意事项
+当对话窗口达到一定条件后，系统会把高价值对话压缩成摘要，写入 `chroma_memory_db/`，后续按当前问题做相似度召回。
 
-- 首次运行如果本地没有 Embedding 模型缓存，可能需要联网下载
-- `.env` 不应上传到 GitHub
-- 如果更换了学生手册 PDF，系统会自动重新建索引
+### 会话隔离
+
+长期记忆检索时会按 `session_id` 做过滤，避免跨会话串线。
+
+## 工具调度说明
+
+当前仓库内置的是示例工具实现，适合演示 Function Calling 闭环。后续如果要升级为真实企业级校园智能体，可以将这些函数替换为：
+
+- 教务系统课表接口
+- 校园天气或城市天气接口
+- 办事大厅流程查询接口
+- 校园通知公告接口
+- 学校知识中台 / 企业内部知识库接口
+
+## GitHub 与隐私说明
+
+以下内容已配置为不上传：
+
+- `.env`
+- `chroma_db/`
+- `chroma_memory_db/`
+- `manual_index_meta.json`
+- `__pycache__/`
+
+因此本地密钥、索引缓存和运行时文件不会被提交。
+
+## 后续可扩展方向
+
+- 接入真实校园业务工具
+- 引入更强的重排模型
+- 增加用户身份体系与权限控制
+- 接入对象存储与多文档知识库
+- 增加日志、监控、Tracing 与评测看板
+- 支持 Docker 化部署
+
+## 项目定位
+
+这是一个以校园场景为核心、具备知识检索、记忆管理与工具调度能力的 Agent 项目原型。  
+它已经具备“企业级校园知识库与工具调度 AI Agent”的基础骨架，适合继续向更完整的工程化版本演进。

@@ -204,6 +204,27 @@ async def ask_question_async(question: str, retriever):
     return await asyncio.to_thread(ask_question, question, retriever)
 
 
+async def get_rag_context_async(question: str, retriever) -> str:
+    """
+    只提取 RAG 检索上下文，不调用大模型。
+    这里通过 to_thread 包装同步检索，避免阻塞事件循环。
+    """
+    question = (question or "").strip()
+    if not question:
+        raise ValueError("问题不能为空。")
+
+    if retriever is None:
+        raise ValueError("检索器尚未初始化，无法提取 RAG 上下文。")
+
+    def _build_context() -> str:
+        candidate_docs = retriever.invoke(question)
+        docs = rerank_documents(question, candidate_docs)
+        context, _ = format_context(docs)
+        return context
+
+    return await asyncio.to_thread(_build_context)
+
+
 async def init_rag_system_async():
     """
     异步初始化 RAG 系统。
