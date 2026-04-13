@@ -27,7 +27,7 @@ from vector_store import get_embeddings
 
 app = FastAPI(
     title="重邮极客 AI 大脑",
-    version="1.1.0",
+    version="1.2.0",
 )
 
 load_dotenv()
@@ -43,6 +43,12 @@ MESSAGES_PER_ROUND = 2
 SHORT_TERM_MESSAGE_LIMIT = SHORT_TERM_ROUNDS * MESSAGES_PER_ROUND
 LONG_TERM_MEMORY_DIR = Path("./chroma_memory_db")
 LONG_TERM_MEMORY_COLLECTION = "chat_long_term_memory"
+DEFAULT_SESSION_TITLE = "新建对话"
+SESSION_TITLE_LIMIT = 18
+SESSION_PREVIEW_LIMIT = 60
+API_HOST = os.getenv("API_HOST", "0.0.0.0")
+API_PORT = int(os.getenv("API_PORT", "8000"))
+API_RELOAD = os.getenv("API_RELOAD", "true").lower() == "true"
 
 retriever = None
 retriever_init_info: dict[str, object] = {}
@@ -81,6 +87,37 @@ class ChatRequest(BaseModel):
         if any(keyword in lowered for keyword in blocked_keywords):
             raise ValueError("检测到非法指令，已拦截可疑 Prompt 注入。")
         return value
+
+
+def normalize_message_role(role: str) -> str:
+    return "assistant" if role in {"assistant", "ai"} else role
+
+
+def build_session_title(message: str) -> str:
+    compact_message = " ".join((message or "").strip().split())
+    if not compact_message:
+        return DEFAULT_SESSION_TITLE
+    if len(compact_message) <= SESSION_TITLE_LIMIT:
+        return compact_message
+    return f"{compact_message[:SESSION_TITLE_LIMIT]}..."
+
+
+def build_message_preview(message: str) -> str:
+    compact_message = " ".join((message or "").strip().split())
+    if len(compact_message) <= SESSION_PREVIEW_LIMIT:
+        return compact_message
+    return f"{compact_message[:SESSION_PREVIEW_LIMIT]}..."
+
+
+def serialize_messages(messages: list[Message]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": message.id,
+            "role": normalize_message_role(message.role),
+            "content": message.content,
+        }
+        for message in messages
+    ]
 
 
 def build_system_prompt(hybrid_context: dict[str, str]) -> str:
@@ -317,6 +354,129 @@ def persist_long_term_summary(request: ChatRequest) -> None:
         )
 
 
+def ensure_session_exists(request: ChatRequest) -> None:
+    with Session(engine) as db:
+        current_user = db.scalar(select(User).where(User.id == request.user_id))
+
+        if current_user is None:
+            current_user = User(
+                id=request.user_id,
+                username=f"user_{request.user_id}",
+            )
+            db.add(current_user)
+            db.flush()
+
+        chat_window = db.scalar(
+            select(ChatSession).where(ChatSession.id == request.session_id)
+        )
+
+        if chat_window is None:
+            chat_window = ChatSession(
+                id=request.session_id,
+                title=DEFAULT_SESSION_TITLE,
+                user_id=current_user.id,
+            )
+            db.add(chat_window)
+            db.commit()
+            db.refresh(chat_window)
+            return
+
+        if chat_window.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="无权访问该聊天会话。")
+
+
+def save_messages(request: ChatRequest, ai_reply: str) -> None:
+    with Session(engine) as db:
+        chat_window = db.scalar(
+            select(ChatSession).where(ChatSession.id == request.session_id)
+        )
+        if (
+            chat_window is not None
+            and (not chat_window.title.strip() or chat_window.title == DEFAULT_SESSION_TITLE)
+        ):
+            chat_window.title = build_session_title(request.new_message)
+
+        user_message = Message(
+            role="user",
+            content=request.new_message,
+            session_id=request.session_id,
+        )
+        ai_message = Message(
+            role="assistant",
+            content=ai_reply,
+            session_id=request.session_id,
+        )
+        db.add_all([user_message, ai_message])
+        db.commit()
+
+
+def list_user_sessions(user_id: str) -> list[dict[str, Any]]:
+    with Session(engine) as db:
+        sessions = db.scalars(
+            select(ChatSession).where(ChatSession.user_id == user_id)
+        ).all()
+
+        if not sessions:
+            return []
+
+        session_ids = [session.id for session in sessions]
+        session_meta = {
+            session.id: {
+                "message_count": 0,
+                "last_message_id": 0,
+                "preview": "",
+            }
+            for session in sessions
+        }
+
+        messages = db.scalars(
+            select(Message)
+            .where(Message.session_id.in_(session_ids))
+            .order_by(desc(Message.id))
+        ).all()
+
+        for message in messages:
+            meta = session_meta[message.session_id]
+            meta["message_count"] += 1
+            if meta["last_message_id"] == 0:
+                meta["last_message_id"] = message.id
+                meta["preview"] = build_message_preview(message.content)
+
+    summaries = [
+        {
+            "session_id": session.id,
+            "title": session.title or DEFAULT_SESSION_TITLE,
+            "preview": session_meta[session.id]["preview"],
+            "message_count": session_meta[session.id]["message_count"],
+            "last_message_id": session_meta[session.id]["last_message_id"],
+        }
+        for session in sessions
+    ]
+    summaries.sort(key=lambda item: item["last_message_id"], reverse=True)
+
+    for summary in summaries:
+        summary.pop("last_message_id", None)
+
+    return summaries
+
+
+def get_session_messages(user_id: str, session_id: str) -> list[dict[str, Any]]:
+    with Session(engine) as db:
+        chat_window = db.scalar(select(ChatSession).where(ChatSession.id == session_id))
+        if chat_window is None:
+            raise HTTPException(status_code=404, detail="会话不存在。")
+        if chat_window.user_id != user_id:
+            raise HTTPException(status_code=403, detail="无权访问该聊天会话。")
+
+        messages = db.scalars(
+            select(Message)
+            .where(Message.session_id == session_id)
+            .order_by(asc(Message.id))
+        ).all()
+
+    return serialize_messages(messages)
+
+
 async def resolve_tool_messages(first_message: Any) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     resolved_tool_calls: list[dict[str, Any]] = []
     tool_messages: list[dict[str, str]] = []
@@ -531,6 +691,19 @@ def read_root() -> dict[str, str]:
     return {"message": "欢迎来到重邮极客 Agent 服务。"}
 
 
+@app.get("/sessions")
+def read_sessions(user_id: str) -> dict[str, list[dict[str, Any]]]:
+    return {"sessions": list_user_sessions(user_id)}
+
+
+@app.get("/sessions/{session_id}/messages")
+def read_session_messages(session_id: str, user_id: str) -> dict[str, Any]:
+    return {
+        "session_id": session_id,
+        "messages": get_session_messages(user_id, session_id),
+    }
+
+
 @app.on_event("startup")
 async def startup_event() -> None:
     def init_long_term_memory_store() -> Chroma:
@@ -691,7 +864,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
 if __name__ == "__main__":
     uvicorn.run(
         app="api:app",
-        host="127.0.0.1",
-        port=8000,
-        reload=True,
+        host=API_HOST,
+        port=API_PORT,
+        reload=API_RELOAD,
     )
