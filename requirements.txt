@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+streamlit
+requests
+sqlalchemy
+pymysql
+PyMuPDF
+pypdf
+langchain
+langchain-community
+langchain-text-splitters
+chromadb
+python-dotenv
+zhipuai
+websocket-client
