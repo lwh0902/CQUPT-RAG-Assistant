@@ -3,23 +3,26 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import zipfile
 from datetime import datetime
 from pathlib import Path
+from xml.etree import ElementTree
 
 from dotenv import load_dotenv
+from langchain_core.documents import Document
 from langchain_community.document_loaders import PyMuPDFLoader, PyPDFLoader
 from langchain_community.embeddings import ZhipuAIEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from settings import CANDIDATE_TOP_K, PDF_PATH
+from settings import CANDIDATE_TOP_K, PDF_PATH, POLICY_DOCUMENTS
 
 
 # 向量库固定落盘目录。
 PERSIST_DIRECTORY = Path("./chroma_db")
 
-# Chroma 固定集合名，避免不同业务混到同一个集合里。
-COLLECTION_NAME = "cqupt_student_manual"
+# Chroma 固定集合名，第一版升级为校园政策多文档集合。
+COLLECTION_NAME = "cqupt_policy_docs"
 
 # 轻量元数据文件，用于给上层返回初始化提示信息。
 INDEX_META_PATH = Path("manual_index_meta.json")
@@ -64,11 +67,77 @@ def load_pdf_documents(pdf_path: Path):
         return PyPDFLoader(str(pdf_path)).load()
 
 
+def load_docx_documents(docx_path: Path) -> list[Document]:
+    """用标准库读取 docx 文本，避免第一版引入额外依赖。"""
+    if not docx_path.exists():
+        raise FileNotFoundError(f"未找到 DOCX 文件：{docx_path}")
+
+    with zipfile.ZipFile(docx_path) as archive:
+        xml_text = archive.read("word/document.xml")
+
+    root = ElementTree.fromstring(xml_text)
+    namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    paragraphs: list[str] = []
+    for paragraph in root.findall(".//w:p", namespace):
+        texts = [
+            node.text or ""
+            for node in paragraph.findall(".//w:t", namespace)
+            if node.text
+        ]
+        paragraph_text = "".join(texts).strip()
+        if paragraph_text:
+            paragraphs.append(paragraph_text)
+
+    return [
+        Document(
+            page_content="\n".join(paragraphs),
+            metadata={
+                "source": str(docx_path),
+                "file_path": str(docx_path),
+                "page": 1,
+                "format": "DOCX",
+            },
+        )
+    ]
+
+
+def load_policy_documents(policy_documents: list[dict] | None = None) -> list[Document]:
+    """加载第一批校园政策文档，并注入稳定元数据。"""
+    documents: list[Document] = []
+    for item in policy_documents or POLICY_DOCUMENTS:
+        path = Path(item["path"]).expanduser()
+        suffix = path.suffix.lower()
+        if suffix == ".pdf":
+            loaded = load_pdf_documents(path)
+        elif suffix == ".docx":
+            loaded = load_docx_documents(path)
+        else:
+            raise ValueError(f"暂不支持的文档格式：{path}")
+
+        for doc in loaded:
+            page = doc.metadata.get("page")
+            doc.metadata.update(
+                {
+                    "document_id": item["document_id"],
+                    "document_name": item["document_name"],
+                    "document_type": item["document_type"],
+                    "topic": item["topic"],
+                    "authority_level": item["authority_level"],
+                    "source": str(path),
+                    "file_path": str(path),
+                    "page": int(page) + 1 if isinstance(page, int) else page,
+                }
+            )
+            documents.append(doc)
+
+    return documents
+
+
 def split_documents(documents):
     """使用递归切分器对 PDF 文档做语义友好的分块。"""
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=50,
+        chunk_size=600,
+        chunk_overlap=80,
     )
     return text_splitter.split_documents(documents)
 
@@ -132,12 +201,13 @@ def clear_existing_collection(persist_dir: Path = PERSIST_DIRECTORY) -> None:
 def build_vector_store(
     pdf_path: Path = PDF_PATH,
     persist_dir: Path = PERSIST_DIRECTORY,
+    policy_documents: list[dict] | None = None,
 ) -> dict:
-    """从本地 PDF 重建 Chroma 向量库，并返回建库信息。"""
+    """从本地政策文档重建 Chroma 向量库，并返回建库信息。"""
     clear_existing_collection(persist_dir)
     persist_dir.mkdir(parents=True, exist_ok=True)
 
-    documents = load_pdf_documents(pdf_path)
+    documents = load_policy_documents(policy_documents)
     chunks = split_documents(documents)
     embeddings = get_embeddings()
 
@@ -154,10 +224,26 @@ def build_vector_store(
 
     meta = {
         "status": "rebuilt",
-        "message": "已根据本地 PDF 重建 Chroma 向量库。",
+        "message": "已根据本地政策文档重建 Chroma 向量库。",
         "pdf_path": str(pdf_path),
+        "collection_name": COLLECTION_NAME,
+        "document_count": len({doc.metadata.get("document_id") for doc in documents}),
         "page_count": len(documents),
         "chunk_count": len(chunks),
+        "documents": [
+            {
+                key: item[key]
+                for key in (
+                    "document_id",
+                    "document_name",
+                    "document_type",
+                    "topic",
+                    "authority_level",
+                    "path",
+                )
+            }
+            for item in (policy_documents or POLICY_DOCUMENTS)
+        ],
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
     save_index_meta(meta)
@@ -185,8 +271,11 @@ def create_or_load_retriever(
             "status": "loaded",
             "message": "检测到本地已有 Chroma 向量库，已直接加载。",
             "pdf_path": meta.get("pdf_path", str(pdf_path)),
+            "collection_name": meta.get("collection_name", COLLECTION_NAME),
+            "document_count": meta.get("document_count"),
             "page_count": meta.get("page_count"),
             "chunk_count": meta.get("chunk_count"),
+            "documents": meta.get("documents", []),
             "updated_at": meta.get("updated_at"),
         }
     else:

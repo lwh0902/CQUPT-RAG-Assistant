@@ -1,0 +1,153 @@
+{
+  "version": "scholarship-policy-graph-v1",
+  "scope": "重庆邮电大学本科生奖学金政策第一版知识图谱",
+  "nodes": [
+    {
+      "id": "academic_scholarship",
+      "type": "scholarship",
+      "name": "学业奖学金"
+    },
+    {
+      "id": "national_scholarship",
+      "type": "scholarship",
+      "name": "国家奖学金"
+    },
+    {
+      "id": "national_inspirational_scholarship",
+      "type": "scholarship",
+      "name": "国家励志奖学金"
+    },
+    {
+      "id": "social_scholarship",
+      "type": "scholarship",
+      "name": "社会奖学金"
+    },
+    {
+      "id": "comprehensive_evaluation",
+      "type": "evaluation",
+      "name": "综合素质测评"
+    },
+    {
+      "id": "intellectual_evaluation",
+      "type": "evaluation",
+      "name": "智育测评成绩"
+    },
+    {
+      "id": "financial_difficulty_recognition",
+      "type": "condition",
+      "name": "家庭经济困难认定"
+    },
+    {
+      "id": "disciplinary_restriction",
+      "type": "condition",
+      "name": "违纪处分限制"
+    },
+    {
+      "id": "scholarship_rules_2025",
+      "type": "document",
+      "name": "本科生奖学金评定办法"
+    },
+    {
+      "id": "comprehensive_evaluation_rules_2025",
+      "type": "document",
+      "name": "本科生综合素质测评办法"
+    },
+    {
+      "id": "social_scholarship_rules",
+      "type": "document",
+      "name": "本科生社会奖学金评定办法"
+    }
+  ],
+  "edges": [
+    {
+      "source": "academic_scholarship",
+      "relation": "requires",
+      "target": "intellectual_evaluation",
+      "evidence": {
+        "document_id": "scholarship_rules_2025",
+        "document_name": "本科生奖学金评定办法",
+        "note": "学业奖学金按智育测评成绩和综合素质测评成绩排名评定。"
+      }
+    },
+    {
+      "source": "academic_scholarship",
+      "relation": "requires",
+      "target": "comprehensive_evaluation",
+      "evidence": {
+        "document_id": "scholarship_rules_2025",
+        "document_name": "本科生奖学金评定办法",
+        "note": "不同等级学业奖学金要求不同排名阈值。"
+      }
+    },
+    {
+      "source": "national_scholarship",
+      "relation": "requires",
+      "target": "comprehensive_evaluation",
+      "evidence": {
+        "document_id": "scholarship_rules_2025",
+        "document_name": "本科生奖学金评定办法",
+        "note": "国家奖学金要求学业成绩和综合素质测评成绩排名靠前，并在社会实践、创新能力、综合素质等方面突出。"
+      }
+    },
+    {
+      "source": "national_inspirational_scholarship",
+      "relation": "requires",
+      "target": "financial_difficulty_recognition",
+      "evidence": {
+        "document_id": "scholarship_rules_2025",
+        "document_name": "本科生奖学金评定办法",
+        "note": "国家励志奖学金用于奖励资助品学兼优的家庭经济困难学生。"
+      }
+    },
+    {
+      "source": "national_scholarship",
+      "relation": "mutually_exclusive_with",
+      "target": "national_inspirational_scholarship",
+      "evidence": {
+        "document_id": "scholarship_rules_2025",
+        "document_name": "本科生奖学金评定办法",
+        "note": "同一学年内，国家奖学金与国家励志奖学金通常不能同时获得。"
+      }
+    },
+    {
+      "source": "social_scholarship",
+      "relation": "governed_by",
+      "target": "social_scholarship_rules",
+      "evidence": {
+        "document_id": "social_scholarship_rules",
+        "document_name": "本科生社会奖学金评定办法",
+        "note": "社会奖学金按专项评定办法和具体项目要求执行。"
+      }
+    },
+    {
+      "source": "intellectual_evaluation",
+      "relation": "defined_by",
+      "target": "comprehensive_evaluation_rules_2025",
+      "evidence": {
+        "document_id": "comprehensive_evaluation_rules_2025",
+        "document_name": "本科生综合素质测评办法",
+        "note": "智育测评成绩按课程成绩与学分加权计算。"
+      }
+    },
+    {
+      "source": "comprehensive_evaluation",
+      "relation": "defined_by",
+      "target": "comprehensive_evaluation_rules_2025",
+      "evidence": {
+        "document_id": "comprehensive_evaluation_rules_2025",
+        "document_name": "本科生综合素质测评办法",
+        "note": "综合素质测评由德育、智育、体育、美育、劳动教育和学术科技与创新创业实践等部分构成。"
+      }
+    },
+    {
+      "source": "disciplinary_restriction",
+      "relation": "affects",
+      "target": "academic_scholarship",
+      "evidence": {
+        "document_id": "scholarship_rules_2025",
+        "document_name": "本科生奖学金评定办法",
+        "note": "违纪处分、弄虚作假等情形会影响评奖评优资格。"
+      }
+    }
+  ]
+}

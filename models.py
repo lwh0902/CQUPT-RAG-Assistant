@@ -14,15 +14,15 @@ class User(Base):
 
     __tablename__ = "users"
 
-    # 对外暴露的主键改为 UUID 字符串，降低被枚举和越权猜测的风险。
     id: Mapped[str] = mapped_column(
         String(50),
         primary_key=True,
         default=lambda: str(uuid.uuid4()),
     )
     username: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    phone: Mapped[str] = mapped_column(String(20), unique=True, nullable=True)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=True)
 
-    # 一个用户可以拥有多个聊天会话，删除用户时级联删除其所有会话。
     sessions: Mapped[List["ChatSession"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",

@@ -76,9 +76,10 @@ def evaluate_with_llm(client, case: dict, actual_answer: str) -> bool:
 """
 
     response = client.chat.completions.create(
-        model="glm-4",
+        model="glm-4.7-flash",
         messages=[{"role": "user", "content": judge_prompt}],
         temperature=0.01,
+        thinking={"type": "disabled"},
     )
     content = response.choices[0].message.content.strip().upper()
     return "YES" in content

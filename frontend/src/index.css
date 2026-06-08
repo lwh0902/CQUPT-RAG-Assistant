@@ -1,0 +1,163 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f9f9f9;
+  --bg-tertiary: #f0f0f0;
+  --bg-input: #ffffff;
+  --bg-user-bubble: #2d2d2d;
+  --bg-assistant-bubble: transparent;
+  --bg-hover: #f5f5f5;
+  --bg-sidebar: #f9f9f9;
+  --text-primary: #1a1a1a;
+  --text-secondary: #6b6b6b;
+  --text-tertiary: #999999;
+  --text-on-accent: #ffffff;
+  --text-user-bubble: #ffffff;
+  --text-assistant: #1a1a1a;
+  --border: #e5e5e5;
+  --border-input: #d9d9d9;
+  --accent: #10a37f;
+  --accent-hover: #0d8c6d;
+  --accent-light: #e6f7f2;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --scrollbar-thumb: #ccc;
+  --code-bg: #f5f5f5;
+  --code-text: #1a1a1a;
+}
+
+.dark {
+  --bg-primary: #212121;
+  --bg-secondary: #171717;
+  --bg-tertiary: #303030;
+  --bg-input: #2f2f2f;
+  --bg-user-bubble: #2f2f2f;
+  --bg-assistant-bubble: transparent;
+  --bg-hover: #2a2a2a;
+  --bg-sidebar: #171717;
+  --text-primary: #ececec;
+  --text-secondary: #c7c7c7;
+  --text-tertiary: #8a8a8a;
+  --text-on-accent: #ffffff;
+  --text-user-bubble: #ffffff;
+  --text-assistant: #ececec;
+  --border: #2f2f2f;
+  --border-input: #4a4a4a;
+  --accent: #10a37f;
+  --accent-hover: #1db990;
+  --accent-light: #1a2e28;
+  --surface: #2b2b2b;
+  --surface-raised: #303030;
+  --scrollbar-thumb: #555;
+  --code-bg: #171717;
+  --code-text: #ececec;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  transition: background 0.2s, color 0.2s;
+}
+
+/* Markdown content styles */
+.markdown-body {
+  line-height: 1.7;
+}
+
+.markdown-body p {
+  margin-bottom: 0.75rem;
+}
+
+.markdown-body p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body ul, .markdown-body ol {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+}
+
+.markdown-body ul {
+  list-style-type: disc;
+}
+
+.markdown-body ol {
+  list-style-type: decimal;
+}
+
+.markdown-body li {
+  margin-bottom: 0.25rem;
+}
+
+.markdown-body strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.markdown-body code {
+  background: var(--code-bg);
+  color: var(--code-text);
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.25rem;
+  font-size: 0.85em;
+  font-family: "SF Mono", "Fira Code", monospace;
+}
+
+.markdown-body pre {
+  background: var(--code-bg);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+}
+
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.85rem;
+}
+
+.markdown-body blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 0.75rem;
+  margin: 0.75rem 0;
+  color: var(--text-secondary);
+}
+
+.markdown-body h1, .markdown-body h2, .markdown-body h3 {
+  font-weight: 600;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.markdown-body h1 { font-size: 1.25rem; }
+.markdown-body h2 { font-size: 1.125rem; }
+.markdown-body h3 { font-size: 1rem; }
+
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+}
+
+.markdown-body th, .markdown-body td {
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+
+.markdown-body th {
+  background: var(--bg-tertiary);
+  font-weight: 600;
+}

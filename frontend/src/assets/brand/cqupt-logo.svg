@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">CQUPT logo placeholder</title>
+  <path d="M64 8 114 39v50L64 120 14 89V39L64 8Z" fill="#ffe68a" stroke="#007a55" stroke-width="8" />
+  <path d="M64 23 98 44v38L64 103 30 82V44L64 23Z" fill="#007a55" />
+  <path d="M63 36 89 85H75l-5-10H49l-5 10H31l26-49h6Zm-8 27h10l-5-11-5 11Z" fill="#ffe68a" />
+  <path d="M48 91h32" stroke="#ffe68a" stroke-width="6" stroke-linecap="round" />
+</svg>
