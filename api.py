@@ -16,7 +16,7 @@ from langchain_community.vectorstores import Chroma
 import uvicorn
 
 from rag import init_rag_system, init_bm25_index, get_strategy
-from routers import auth_router, chat_router, sessions_router
+from routers import auth_router, chat_router, documents_router, sessions_router
 from vector_store import get_embeddings
 
 load_dotenv()
@@ -78,6 +78,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(sessions_router)
 app.include_router(chat_router)
+app.include_router(documents_router)
 
 
 @app.exception_handler(RequestValidationError)

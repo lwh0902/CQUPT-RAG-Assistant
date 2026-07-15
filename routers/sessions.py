@@ -3,7 +3,8 @@
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import asc, desc, select
+from pydantic import BaseModel, Field
+from sqlalchemy import asc, desc, or_, select
 from sqlalchemy.orm import Session
 
 from database import engine
@@ -15,6 +16,9 @@ router = APIRouter(tags=["sessions"])
 DEFAULT_SESSION_TITLE = "新建对话"
 SESSION_TITLE_LIMIT = 18
 SESSION_PREVIEW_LIMIT = 60
+SEARCH_SNIPPET_LIMIT = 80
+SEARCH_RESULT_LIMIT = 30
+SESSION_TITLE_MAX_LENGTH = 100
 
 
 def normalize_message_role(role: str) -> str:
@@ -154,3 +158,117 @@ def delete_session(
         db.delete(chat_window)
         db.commit()
     return {"message": "已删除"}
+
+
+class RenameSessionRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=SESSION_TITLE_MAX_LENGTH)
+
+
+@router.patch("/sessions/{session_id}")
+def rename_session(
+    session_id: str,
+    body: RenameSessionRequest,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    new_title = " ".join(body.title.strip().split())
+    if not new_title:
+        raise HTTPException(status_code=422, detail="标题不能为空。")
+    if len(new_title) > SESSION_TITLE_MAX_LENGTH:
+        new_title = new_title[:SESSION_TITLE_MAX_LENGTH]
+
+    with Session(engine) as db:
+        chat_window = db.scalar(select(ChatSession).where(ChatSession.id == session_id))
+        if chat_window is None:
+            raise HTTPException(status_code=404, detail="会话不存在。")
+        if chat_window.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="无权修改该会话。")
+        chat_window.title = new_title
+        db.commit()
+        return {
+            "session_id": chat_window.id,
+            "title": chat_window.title,
+        }
+
+
+def _build_search_snippet(content: str, keyword: str) -> str:
+    compact = " ".join((content or "").strip().split())
+    if not compact:
+        return ""
+    lower_content = compact.lower()
+    lower_keyword = keyword.lower()
+    idx = lower_content.find(lower_keyword)
+    if idx < 0:
+        return compact[:SEARCH_SNIPPET_LIMIT] + ("..." if len(compact) > SEARCH_SNIPPET_LIMIT else "")
+    half = SEARCH_SNIPPET_LIMIT // 2
+    start = max(0, idx - half)
+    end = min(len(compact), idx + len(keyword) + half)
+    prefix = "..." if start > 0 else ""
+    suffix = "..." if end < len(compact) else ""
+    return prefix + compact[start:end] + suffix
+
+
+@router.get("/sessions/search")
+def search_sessions(
+    q: str = Query(..., min_length=1, description="关键词，匹配会话标题或消息内容"),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    keyword = q.strip()
+    if not keyword:
+        return {"query": q, "results": []}
+
+    like_pattern = f"%{keyword}%"
+
+    with Session(engine) as db:
+        sessions = db.scalars(
+            select(ChatSession)
+            .where(ChatSession.user_id == current_user.id)
+            .where(
+                or_(
+                    ChatSession.title.ilike(like_pattern),
+                    ChatSession.id.in_(
+                        select(Message.session_id).where(Message.content.ilike(like_pattern))
+                    ),
+                )
+            )
+            .order_by(desc(ChatSession.id))
+            .limit(SEARCH_RESULT_LIMIT)
+        ).all()
+
+        if not sessions:
+            return {"query": q, "results": []}
+
+        session_ids = [s.id for s in sessions]
+        messages_by_session: dict[str, list[Message]] = {}
+        for msg in db.scalars(
+            select(Message)
+            .where(Message.session_id.in_(session_ids))
+            .order_by(asc(Message.id))
+        ).all():
+            messages_by_session.setdefault(msg.session_id, []).append(msg)
+
+    results: list[dict[str, Any]] = []
+    for session in sessions:
+        title_hit = keyword.lower() in (session.title or "").lower()
+        first_msg_content = ""
+        matched_message: Optional[str] = None
+        msgs = messages_by_session.get(session.id, [])
+        if msgs:
+            first_msg_content = msgs[0].content or ""
+
+        for msg in msgs:
+            if keyword.lower() in (msg.content or "").lower():
+                matched_message = _build_search_snippet(msg.content, keyword)
+                break
+
+        results.append(
+            {
+                "session_id": session.id,
+                "title": session.title or DEFAULT_SESSION_TITLE,
+                "preview": matched_message or _build_search_snippet(first_msg_content, keyword),
+                "matched_in_title": title_hit,
+                "matched_in_message": matched_message is not None,
+                "message_count": len(msgs),
+            }
+        )
+
+    return {"query": q, "results": results}

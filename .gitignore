@@ -7,8 +7,11 @@ __pycache__/
 
 chroma_db/
 chroma_memory_db/
+chroma_db.broken.*/
+chroma_memory_db.broken.*/
 bm25_index_cache.json
 manual_index_meta.json
+cache/
 
 .vite/
 node_modules/

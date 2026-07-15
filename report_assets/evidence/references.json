@@ -1,0 +1,74 @@
+[
+  {
+    "id": 1,
+    "type": "conference",
+    "authors": "Lewis, P.; Perez, E.; Piktus, A.; et al.",
+    "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+    "venue": "Advances in Neural Information Processing Systems 33",
+    "year": 2020,
+    "url": "https://papers.nips.cc/paper_files/paper/2020/hash/6b493230205f780e1bc26945df7481e5-Abstract.html"
+  },
+  {
+    "id": 2,
+    "type": "conference",
+    "authors": "Reimers, N.; Gurevych, I.",
+    "title": "Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks",
+    "venue": "Proceedings of EMNLP-IJCNLP",
+    "year": 2019,
+    "url": "https://aclanthology.org/D19-1410/"
+  },
+  {
+    "id": 3,
+    "type": "journal",
+    "authors": "Robertson, S.; Zaragoza, H.",
+    "title": "The Probabilistic Relevance Framework: BM25 and Beyond",
+    "venue": "Foundations and Trends in Information Retrieval",
+    "year": 2009,
+    "url": "https://www.nowpublishers.com/article/Download/INR-019"
+  },
+  {
+    "id": 4,
+    "type": "conference",
+    "authors": "Cormack, G. V.; Clarke, C. L. A.; Buettcher, S.",
+    "title": "Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods",
+    "venue": "Proceedings of SIGIR 2009",
+    "year": 2009,
+    "url": "https://research.google/pubs/reciprocal-rank-fusion-outperforms-condorcet-and-individual-rank-learning-methods/"
+  },
+  {
+    "id": 5,
+    "type": "documentation",
+    "authors": "Chroma",
+    "title": "Query and Get",
+    "venue": "Chroma Documentation",
+    "year": 2026,
+    "url": "https://docs.trychroma.com/docs/querying-collections/query-and-get"
+  },
+  {
+    "id": 6,
+    "type": "documentation",
+    "authors": "LangChain",
+    "title": "Retrieval",
+    "venue": "LangChain Documentation",
+    "year": 2026,
+    "url": "https://docs.langchain.com/oss/python/langchain/retrieval"
+  },
+  {
+    "id": 7,
+    "type": "documentation",
+    "authors": "FastAPI",
+    "title": "WebSockets",
+    "venue": "FastAPI Documentation",
+    "year": 2026,
+    "url": "https://fastapi.tiangolo.com/advanced/websockets/"
+  },
+  {
+    "id": 8,
+    "type": "documentation",
+    "authors": "智谱 AI",
+    "title": "工具调用（Function Calling）",
+    "venue": "智谱 AI 开放文档",
+    "year": 2026,
+    "url": "https://docs.bigmodel.cn/cn/guide/capabilities/function-calling"
+  }
+]

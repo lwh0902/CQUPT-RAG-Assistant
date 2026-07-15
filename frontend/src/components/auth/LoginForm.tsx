@@ -2,6 +2,7 @@ import { useState, useCallback, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, Phone, Lock, ArrowRight } from 'lucide-react'
 import { useAuthStore } from '../../store/auth'
+import { Button } from '@/components/ui/neon-button'
 
 export default function LoginForm() {
   const [phone, setPhone] = useState('')
@@ -119,10 +120,12 @@ export default function LoginForm() {
       )}
 
       {/* Submit */}
-      <button
+      <Button
         type="submit"
+        variant="solid"
+        size="lg"
         disabled={isLoading}
-        className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--accent)] py-2.5 text-sm font-medium text-[var(--text-on-accent)] transition-colors hover:bg-[var(--accent-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)] focus:ring-offset-2 focus:ring-offset-[var(--bg-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+        className="w-full justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {isLoading ? (
           <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
@@ -132,7 +135,7 @@ export default function LoginForm() {
             <ArrowRight className="h-4 w-4" />
           </>
         )}
-      </button>
+      </Button>
     </form>
   )
 }

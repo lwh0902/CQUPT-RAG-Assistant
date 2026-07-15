@@ -248,6 +248,12 @@ def build_sources_from_knowledge(knowledge_text: str) -> list[dict[str, Any]]:
     if not knowledge_text.strip():
         return []
 
+    from settings import POLICY_DOCUMENTS
+
+    document_name_to_id = {
+        item["document_name"]: item["document_id"] for item in POLICY_DOCUMENTS
+    }
+
     source_map: dict[tuple[str, int], str] = {}
     pattern = re.compile(
         r"【(.+?)｜第\s*(\d+)\s*页】\s*\n?(.*?)(?=\n\n【.+?｜第\s*\d+\s*页】|\Z)",
@@ -264,6 +270,7 @@ def build_sources_from_knowledge(knowledge_text: str) -> list[dict[str, Any]]:
 
     return [
         {
+            "document_id": document_name_to_id.get(document_name),
             "document_name": document_name,
             "page": page,
             "snippet": snippet,

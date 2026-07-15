@@ -65,6 +65,7 @@ export interface Message {
 }
 
 export interface Source {
+  document_id?: string
   document_name?: string
   page: number
   snippet?: string
@@ -74,6 +75,37 @@ export interface Source {
 export interface SessionMessagesResponse {
   session_id: string
   messages: Message[]
+}
+
+export interface SessionSearchResult {
+  session_id: string
+  title: string
+  preview: string
+  matched_in_title: boolean
+  matched_in_message: boolean
+  message_count: number
+}
+
+export interface SessionSearchResponse {
+  query: string
+  results: SessionSearchResult[]
+}
+
+export interface KnowledgeDocument {
+  document_id: string
+  document_name: string
+  document_type: string
+  topic: string
+  authority_level: number
+  file_name: string
+  file_size: number
+  file_exists: boolean
+  previewable: boolean
+  page_count: number | null
+}
+
+export interface KnowledgeDocumentsResponse {
+  documents: KnowledgeDocument[]
 }
 
 export interface WSMessage {
@@ -113,4 +145,16 @@ export function createWebSocket(
   }
 
   return ws
+}
+
+export async function searchSessions(query: string): Promise<SessionSearchResponse> {
+  const { data } = await api.get<SessionSearchResponse>('/sessions/search', {
+    params: { q: query },
+  })
+  return data
+}
+
+export async function listKnowledgeDocuments(): Promise<KnowledgeDocumentsResponse> {
+  const { data } = await api.get<KnowledgeDocumentsResponse>('/documents')
+  return data
 }

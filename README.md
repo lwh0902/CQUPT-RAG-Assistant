@@ -49,6 +49,11 @@
 - **LLM-as-Judge 评测框架**: 覆盖 fact / rule / multi_condition / refusal 四类问题
 - **WebSocket 流式输出**: 前端实时 token 流 + 思考链动画 + 来源引用展示
 - **完整用户系统**: 手机号注册 / 登录 / JWT 鉴权 / 会话管理
+- **PDF 原页预览**: 答案引用支持点击跳转，PyMuPDF 按需渲染页码为 PNG，悬停显示缩略图、点击打开原页 + 原文片段
+- **知识库资料浏览**: 弹窗列出系统挂载的全部制度文档（页数 / 大小 / 类型），支持翻页通读
+- **会话全文检索**: SQL `ilike` 同时匹配会话标题与历史消息，返回高亮 snippet
+- **会话重命名**: 双击侧边栏会话进入 inline 编辑，回车 / 失焦保存，ESC 取消
+- **Spline 3D 登录页**: 黑底 + Spotlight 光晕 + Spline 机器人，移动端自适应
 
 ## Evaluation Results
 
@@ -91,7 +96,7 @@ python main.py
 ### 4. 启动服务
 
 ```bash
-# 后端 (默认 :8001)
+# 后端 (默认 :8012)
 python api.py
 
 # 前端 (默认 :5173，自动代理到后端)
@@ -117,7 +122,8 @@ cd frontend && npm run dev
 ├── routers/
 │   ├── auth.py             # 手机号注册 / 登录 / 鉴权
 │   ├── chat.py             # REST + WebSocket 聊天，Agent Loop，记忆管理
-│   └── sessions.py         # 会话 CRUD
+│   ├── sessions.py         # 会话 CRUD + 全文搜索 + 重命名
+│   └── documents.py        # PDF 原页 / 缩略图按需渲染 (PyMuPDF)
 ├── services/
 │   ├── llm.py              # ZhipuAI 客户端，流式输出
 │   ├── rewriter.py         # LLM 查询改写 (1 → 2-4 子查询)
@@ -127,8 +133,12 @@ cd frontend && npm run dev
 └── frontend/
     └── src/
         ├── api/client.ts   # Axios + WebSocket 客户端
-        ├── pages/          # ChatPage, LoginPage
-        ├── components/     # ChatMessage, Sidebar, SourceCitation, ThinkingChain
+        ├── pages/          # ChatPage, LoginPage (Spline 3D)
+        ├── components/
+        │   ├── chat/       # ChatMessage, Sidebar, SourceCitation, ThinkingChain,
+        │   │               # PdfPreviewModal, KnowledgeBaseModal
+        │   └── ui/         # Modal, Card, Spotlight, SplineScene, NeonButton
+        ├── hooks/          # useHoverPreview (悬浮缩略图防抖)
         └── store/          # Zustand (auth, chat, theme, toast)
 ```
 
@@ -138,11 +148,17 @@ cd frontend && npm run dev
 |------|------|------|
 | POST | `/auth/register` | 手机号注册 |
 | POST | `/auth/login` | 登录，返回 JWT |
+| POST | `/auth/check-phone` | 检查手机号是否已注册 |
 | POST | `/chat` | 同步聊天 (REST) |
 | WS | `/ws/chat` | 流式聊天 (WebSocket) |
 | GET | `/sessions` | 会话列表 (分页) |
 | GET | `/sessions/{id}/messages` | 会话消息 |
+| PATCH | `/sessions/{id}` | 重命名会话 |
 | DELETE | `/sessions/{id}` | 删除会话 |
+| GET | `/sessions/search?q=` | 全文检索会话标题与历史消息 |
+| GET | `/documents` | 知识库资料列表 |
+| GET | `/documents/{id}/page/{n}` | 渲染 PDF 第 n 页为 PNG |
+| GET | `/documents/{id}/page/{n}/thumbnail` | PDF 第 n 页缩略图 (0.4x) |
 
 ## License
 

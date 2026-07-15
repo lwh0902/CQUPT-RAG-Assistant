@@ -33,6 +33,7 @@ interface ChatState {
   createSession: () => Promise<string | null>
   selectSession: (sessionId: string) => Promise<void>
   deleteSession: (sessionId: string) => Promise<void>
+  renameSession: (sessionId: string, title: string) => Promise<boolean>
   fetchMessages: (sessionId: string) => Promise<void>
   sendMessage: (content: string) => void
   stopStreaming: () => void
@@ -114,6 +115,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
       useToastStore.getState().addToast('已删除会话', 'success')
     } catch {
       useToastStore.getState().addToast('删除会话失败', 'error')
+    }
+  },
+
+  renameSession: async (sessionId: string, title: string) => {
+    const trimmed = title.trim()
+    if (!trimmed) return false
+    const original = get().sessions.find((s) => s.id === sessionId)?.title ?? ''
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.id === sessionId ? { ...s, title: trimmed } : s,
+      ),
+    }))
+    try {
+      await api.patch(`/sessions/${sessionId}`, { title: trimmed })
+      return true
+    } catch {
+      set((state) => ({
+        sessions: state.sessions.map((s) =>
+          s.id === sessionId ? { ...s, title: original } : s,
+        ),
+      }))
+      useToastStore.getState().addToast('重命名失败，已还原', 'error')
+      return false
     }
   },
 

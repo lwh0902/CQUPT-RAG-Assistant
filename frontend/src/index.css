@@ -3,6 +3,25 @@
 @theme {
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
+
+  /* shadcn semantic token aliases — let bg-card / text-card-foreground / text-muted-foreground work */
+  --color-card: var(--surface);
+  --color-card-foreground: var(--text-primary);
+  --color-muted-foreground: var(--text-tertiary);
+
+  /* aceternity Spotlight animation */
+  --animate-spotlight: spotlight 2s ease 0.75s 1 forwards;
+}
+
+@keyframes spotlight {
+  0% {
+    opacity: 0;
+    transform: translate(-72%, -62%) scale(0.5);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, -40%) scale(1);
+  }
 }
 
 :root {
