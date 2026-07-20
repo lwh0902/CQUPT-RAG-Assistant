@@ -11,6 +11,8 @@ langchain
 langchain-community
 langchain-text-splitters
 chromadb
+jieba
+rank-bm25
 python-dotenv
 zhipuai
 openai
