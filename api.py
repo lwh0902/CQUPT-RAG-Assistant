@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import time
+import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
@@ -16,10 +20,19 @@ from langchain_community.vectorstores import Chroma
 import uvicorn
 
 from rag import init_rag_system, init_bm25_index, get_strategy
-from routers import auth_router, chat_router, documents_router, sessions_router
+from routers import auth_router, chat_router, documents_router, memories_router, sessions_router, settings_router
+from services.web_search import build_tool_registry
+from services.logging_config import configure_logging
 from vector_store import get_embeddings
+from database import Base, engine, ensure_database_exists
 
 load_dotenv()
+
+configure_logging(
+    log_dir=Path(os.getenv("LOG_DIR", "logs")),
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    backup_count=int(os.getenv("LOG_BACKUP_DAYS", "14")),
+)
 
 LONG_TERM_MEMORY_DIR = __import__("pathlib").Path("./chroma_memory_db")
 LONG_TERM_MEMORY_COLLECTION = "chat_long_term_memory"
@@ -40,6 +53,8 @@ async def lifespan(app: FastAPI):
         )
 
     import asyncio
+    await asyncio.to_thread(ensure_database_exists)
+    await asyncio.to_thread(Base.metadata.create_all, bind=engine)
     retriever_data, long_term_store = await asyncio.gather(
         asyncio.to_thread(init_rag_system),
         asyncio.to_thread(init_long_term_memory_store),
@@ -48,6 +63,7 @@ async def lifespan(app: FastAPI):
     app.state.retriever = retriever
     app.state.retriever_init_info = retriever_init_info
     app.state.long_term_memory_store = long_term_store
+    app.state.tool_registry = build_tool_registry()
 
     if get_strategy() == "hybrid":
         await asyncio.to_thread(init_bm25_index)
@@ -75,10 +91,51 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def log_http_requests(request: Request, call_next):
+    from services.log_context import bind_log_context, reset_log_context
+
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+    session_match = re.match(r"^/sessions/([^/]+)", request.url.path)
+    session_id = session_match.group(1) if session_match else ""
+    tokens = bind_log_context(request_id=request_id, user_id="", session_id=session_id)
+    request.state.request_id = request_id
+    request.state.session_id = session_id
+    started = time.perf_counter()
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        response.headers["X-Request-ID"] = request_id
+        return response
+    except Exception:
+        logging.exception("Unhandled HTTP request failure")
+        raise
+    finally:
+        duration_ms = (time.perf_counter() - started) * 1000
+        access_tokens = bind_log_context(
+            user_id=getattr(request.state, "user_id", ""),
+            session_id=getattr(request.state, "session_id", ""),
+        )
+        try:
+            logging.getLogger("cqupt_rag.access").info(
+                "http_request method=%s path=%s status=%s duration_ms=%.2f",
+                request.method,
+                request.url.path,
+                status_code,
+                duration_ms,
+            )
+        finally:
+            reset_log_context(access_tokens)
+        reset_log_context(tokens)
+
 app.include_router(auth_router)
 app.include_router(sessions_router)
 app.include_router(chat_router)
 app.include_router(documents_router)
+app.include_router(settings_router)
+app.include_router(memories_router)
 
 
 @app.exception_handler(RequestValidationError)

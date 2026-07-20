@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from database import engine
 from models import ChatSession, Message, User
 from security import get_current_user
+from services.session_summary import summarize_conversation
 
 router = APIRouter(tags=["sessions"])
 
@@ -141,6 +142,22 @@ def read_session_messages(
     return {
         "session_id": session_id,
         "messages": get_session_messages(current_user.id, session_id),
+    }
+
+
+@router.post("/sessions/{session_id}/summary")
+def summarize_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    messages = get_session_messages(current_user.id, session_id)
+    if len(messages) < 2:
+        raise HTTPException(status_code=422, detail="至少需要两条消息才能生成会话总结。")
+
+    summary = summarize_conversation(messages)
+    return {
+        "session_id": session_id,
+        "summary": summary.model_dump(),
     }
 
 

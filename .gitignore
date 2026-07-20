@@ -12,9 +12,11 @@ chroma_memory_db.broken.*/
 bm25_index_cache.json
 manual_index_meta.json
 cache/
+logs/
 
 .vite/
 node_modules/
+frontend/test-results/
 
 *.png
 *.jpg

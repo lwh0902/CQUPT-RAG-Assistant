@@ -71,11 +71,16 @@ INDEX_META_PATH = Path("manual_index_meta.json")
 SPLITTER_VERSION = "article_chunk_v2"
 
 # Model and retrieval settings.
-MODEL_NAME = "glm-4.7-flash"
+MODEL_NAME = os.getenv("LLM_MODEL", "deepseek-v4-flash")
 EMBEDDING_MODEL_NAME = "shibing624/text2vec-base-chinese"
 CANDIDATE_TOP_K = 8
 RETRIEVAL_TOP_K = 3
 SCORE_THRESHOLD = 0.3
+# Evidence-gate defaults. They must be calibrated against a human-reviewed
+# retrieval set before changing production behavior.
+RETRIEVAL_VECTOR_SUPPORTED_THRESHOLD = float(os.getenv("RETRIEVAL_VECTOR_SUPPORTED_THRESHOLD", "0.52"))
+RETRIEVAL_VECTOR_OUT_OF_SCOPE_THRESHOLD = float(os.getenv("RETRIEVAL_VECTOR_OUT_OF_SCOPE_THRESHOLD", "0.30"))
+RETRIEVAL_KEYWORD_COVERAGE_THRESHOLD = float(os.getenv("RETRIEVAL_KEYWORD_COVERAGE_THRESHOLD", "0.50"))
 
 # PDF chunking settings.
 CHUNK_SIZE = 500

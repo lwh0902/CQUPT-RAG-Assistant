@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import Sidebar from '../components/chat/Sidebar'
 import ChatMessage from '../components/chat/ChatMessage'
 import ChatInput from '../components/chat/ChatInput'
+import WebSearchToggle from '../components/chat/WebSearchToggle'
+import ModelSettingsModal from '../components/chat/ModelSettingsModal'
+import ConversationSummary from '../components/chat/ConversationSummary'
+import MemoryManagerModal from '../components/chat/MemoryManagerModal'
 import { useChatStore } from '../store/chat'
 import { BookOpen, FileQuestion, GraduationCap, PanelLeft, Scale } from 'lucide-react'
 import cquptBg from '../assets/brand/cqupt-bg.png'
@@ -22,13 +26,15 @@ export default function ChatPage() {
     isStreaming,
     thinkingSteps,
     currentReply,
+    webSearchEnabled,
     fetchSessions,
     sendMessage,
+    setWebSearchEnabled,
     stopStreaming,
     cleanup,
   } = useChatStore()
 
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 768)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -76,6 +82,9 @@ export default function ChatPage() {
           <h2 className="truncate rounded-xl px-3 py-2 text-sm font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]">
             {headerTitle}
           </h2>
+          <ConversationSummary sessionId={currentSessionId} messageCount={messages.length} />
+          <MemoryManagerModal />
+          <ModelSettingsModal />
         </header>
 
         <div
@@ -153,6 +162,13 @@ export default function ChatPage() {
 
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-4 pb-4 pt-10 sm:px-6">
           <div className="pointer-events-auto mx-auto max-w-3xl">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <WebSearchToggle
+                enabled={webSearchEnabled}
+                disabled={isStreaming}
+                onChange={setWebSearchEnabled}
+              />
+            </div>
             <ChatInput onSend={sendMessage} isStreaming={isStreaming} onStop={stopStreaming} />
             <p className="mt-2 text-center text-xs text-[var(--text-tertiary)]">
               CQUPT RAG 可能会犯错，请核查重要信息。

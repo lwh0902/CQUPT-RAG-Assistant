@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Session, Message, Source, WSMessage } from '../api/client'
+import type { ConfidenceLevel, Session, Message, Source, WSMessage } from '../api/client'
 import { api, createWebSocket } from '../api/client'
 import { useToastStore } from './toast'
 
@@ -27,6 +27,10 @@ interface ChatState {
   thinkingSteps: ThinkingStep[]
   currentReply: string
   currentSources: Source[]
+  currentConfidenceLevel?: ConfidenceLevel
+  currentEvidenceSummary?: string
+  currentUncertainPoints: string[]
+  webSearchEnabled: boolean
   ws: WebSocket | null
 
   fetchSessions: () => Promise<void>
@@ -36,8 +40,10 @@ interface ChatState {
   renameSession: (sessionId: string, title: string) => Promise<boolean>
   fetchMessages: (sessionId: string) => Promise<void>
   sendMessage: (content: string) => void
+  setWebSearchEnabled: (enabled: boolean) => void
   stopStreaming: () => void
   regenerateLast: () => void
+  retryLastWithWebSearch: () => void
   resetStream: () => void
   cleanup: () => void
 }
@@ -50,6 +56,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   thinkingSteps: [],
   currentReply: '',
   currentSources: [],
+  currentConfidenceLevel: undefined,
+  currentEvidenceSummary: undefined,
+  currentUncertainPoints: [],
+  webSearchEnabled: false,
   ws: null,
 
   fetchSessions: async () => {
@@ -78,6 +88,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       thinkingSteps: [],
       currentReply: '',
       currentSources: [],
+      currentConfidenceLevel: undefined,
+      currentEvidenceSummary: undefined,
+      currentUncertainPoints: [],
     }))
     return newSession.id
   },
@@ -88,6 +101,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       thinkingSteps: [],
       currentReply: '',
       currentSources: [],
+      currentConfidenceLevel: undefined,
+      currentEvidenceSummary: undefined,
+      currentUncertainPoints: [],
     })
     await get().fetchMessages(sessionId)
   },
@@ -179,12 +195,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       created_at: new Date().toISOString(),
     }
 
+    const webSearchEnabled = state.webSearchEnabled
     set((prev) => ({
       messages: [...prev.messages, userMessage],
       isStreaming: true,
       thinkingSteps: [],
       currentReply: '',
       currentSources: [],
+      currentConfidenceLevel: undefined,
+      currentEvidenceSummary: undefined,
+      currentUncertainPoints: [],
+      webSearchEnabled: false,
     }))
 
     if (get().ws) get().ws!.close()
@@ -235,12 +256,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
               role: 'assistant',
               content: get().currentReply,
               sources: data.sources,
+              confidence_level: data.confidence_level,
+              evidence_summary: data.evidence_summary,
+              uncertain_points: data.uncertain_points,
+              retrieval_decision: data.retrieval_decision,
               created_at: new Date().toISOString(),
             }
             set((prev) => ({
               messages: [...prev.messages, assistantMessage],
               isStreaming: false,
               currentSources: data.sources ?? [],
+              currentConfidenceLevel: data.confidence_level,
+              currentEvidenceSummary: data.evidence_summary,
+              currentUncertainPoints: data.uncertain_points ?? [],
             }))
             // Refresh session list to sync title
             get().fetchSessions()
@@ -273,12 +301,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
           user_id: userId,
           session_id: sessionId,
           new_message: content,
+          web_search_enabled: webSearchEnabled,
         })
       )
     }
 
     set({ ws })
   },
+
+  setWebSearchEnabled: (enabled: boolean) => set({ webSearchEnabled: enabled }),
 
   stopStreaming: () => {
     const state = get()
@@ -329,8 +360,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
     get().sendMessage(lastUserEntry.message.content)
   },
 
+  retryLastWithWebSearch: () => {
+    const state = get()
+    if (state.isStreaming) return
+    const lastAssistantIndex = [...state.messages]
+      .map((message, index) => ({ message, index }))
+      .filter((item) => item.message.role === 'assistant')
+      .pop()?.index
+    const searchEnd = lastAssistantIndex ?? state.messages.length
+    const lastUserEntry = state.messages
+      .map((message, index) => ({ message, index }))
+      .slice(0, searchEnd)
+      .filter((item) => item.message.role === 'user')
+      .pop()
+    if (!lastUserEntry) return
+
+    set({ messages: state.messages.slice(0, lastUserEntry.index) })
+    set({ webSearchEnabled: true })
+    get().sendMessage(lastUserEntry.message.content)
+  },
+
   resetStream: () => {
-    set({ thinkingSteps: [], currentReply: '', currentSources: [] })
+    set({ thinkingSteps: [], currentReply: '', currentSources: [], currentConfidenceLevel: undefined, currentEvidenceSummary: undefined, currentUncertainPoints: [] })
   },
 
   cleanup: () => {

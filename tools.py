@@ -1,9 +1,11 @@
 import json
+import asyncio
+import os
 from typing import Any, Callable, Dict, List
 
 
 def get_weather(city_name: str) -> str:
-    """模拟查询天气信息，返回给大模型的必须是 JSON 字符串。"""
+    """Query a configured MCP weather tool; never fabricate weather data."""
     try:
         normalized_city = (city_name or "").strip()
         if not normalized_city:
@@ -15,24 +17,7 @@ def get_weather(city_name: str) -> str:
                 ensure_ascii=False,
             )
 
-        mock_weather_data = {
-            "北京": {"weather": "晴", "temperature": "22C", "humidity": "35%"},
-            "重庆": {"weather": "多云", "temperature": "26C", "humidity": "68%"},
-            "上海": {"weather": "小雨", "temperature": "20C", "humidity": "82%"},
-        }
-        weather_info = mock_weather_data.get(
-            normalized_city,
-            {"weather": "未知", "temperature": "N/A", "humidity": "N/A"},
-        )
-
-        return json.dumps(
-            {
-                "status": "success",
-                "city_name": normalized_city,
-                "data": weather_info,
-            },
-            ensure_ascii=False,
-        )
+        return _call_mcp_tool("MCP_WEATHER_URL", "MCP_WEATHER_TOOL_NAME", "weather.query", {"city_name": normalized_city})
     except Exception as exc:
         return json.dumps(
             {
@@ -45,7 +30,7 @@ def get_weather(city_name: str) -> str:
 
 
 def get_class_schedule(student_id: str) -> str:
-    """模拟查询学生课表，返回给大模型的必须是 JSON 字符串。"""
+    """Query a configured MCP schedule tool; never fabricate schedule data."""
     try:
         normalized_student_id = (student_id or "").strip()
         if not normalized_student_id:
@@ -57,26 +42,7 @@ def get_class_schedule(student_id: str) -> str:
                 ensure_ascii=False,
             )
 
-        mock_schedule_data = {
-            "20250001": [
-                {"weekday": "周一", "course_name": "高等数学", "time": "08:00-09:40", "location": "第一教学楼 A101"},
-                {"weekday": "周三", "course_name": "Python 程序设计", "time": "10:00-11:40", "location": "实验楼 B203"},
-            ],
-            "20250002": [
-                {"weekday": "周二", "course_name": "大学英语", "time": "08:00-09:40", "location": "第二教学楼 C305"},
-                {"weekday": "周四", "course_name": "数据结构", "time": "14:00-15:40", "location": "实验楼 A402"},
-            ],
-        }
-        schedule_info = mock_schedule_data.get(normalized_student_id, [])
-
-        return json.dumps(
-            {
-                "status": "success",
-                "student_id": normalized_student_id,
-                "data": schedule_info,
-            },
-            ensure_ascii=False,
-        )
+        return _call_mcp_tool("MCP_SCHEDULE_URL", "MCP_SCHEDULE_TOOL_NAME", "schedule.query", {"student_id": normalized_student_id})
     except Exception as exc:
         return json.dumps(
             {
@@ -86,6 +52,15 @@ def get_class_schedule(student_id: str) -> str:
             },
             ensure_ascii=False,
         )
+
+
+def _call_mcp_tool(endpoint_env: str, name_env: str, default_name: str, arguments: dict[str, str]) -> str:
+    endpoint = os.getenv(endpoint_env, "").strip()
+    if not endpoint:
+        return json.dumps({"status": "error", "code": "TOOL_UNAVAILABLE", "message": "该工具服务尚未配置。"}, ensure_ascii=False)
+    from services.mcp_tools import MCPStreamableHTTPTool
+    tool = MCPStreamableHTTPTool(endpoint, tool_name=os.getenv(name_env, default_name).strip() or default_name)
+    return asyncio.run(tool.call(arguments))
 
 
 AGENT_TOOLS_SCHEMA: List[Dict[str, Any]] = [

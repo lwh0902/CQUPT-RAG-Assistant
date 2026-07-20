@@ -1,10 +1,13 @@
 """Authentication routes."""
 
+import uuid
+
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import engine
@@ -33,6 +36,17 @@ class RegisterRequest(BaseModel):
     password: str = Field(..., min_length=6, max_length=32)
 
 
+def build_registration_user(phone: str, password: str) -> User:
+    """Create a user with an identifier that cannot collide on phone suffixes."""
+    user_id = str(uuid.uuid4())
+    return User(
+        id=user_id,
+        username=f"user_{user_id.replace('-', '')}",
+        phone=phone,
+        hashed_password=hash_password(password),
+    )
+
+
 @router.post("/check-phone")
 def check_phone(body: PhoneCheckRequest) -> dict[str, bool]:
     with Session(engine) as db:
@@ -58,13 +72,13 @@ def register(body: RegisterRequest) -> dict[str, str]:
         existing = db.scalar(select(User).where(User.phone == body.phone))
         if existing is not None:
             raise HTTPException(status_code=409, detail="该手机号已注册")
-        user = User(
-            phone=body.phone,
-            username=f"user_{body.phone[-4:]}",
-            hashed_password=hash_password(body.password),
-        )
+        user = build_registration_user(body.phone, body.password)
         db.add(user)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="该手机号已注册") from exc
         db.refresh(user)
         token = create_access_token(user.id)
         return {"token": token, "user_id": user.id, "phone": user.phone}

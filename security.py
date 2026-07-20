@@ -7,13 +7,14 @@ from datetime import datetime, timedelta, timezone
 
 import bcrypt
 from jose import JWTError, jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from database import engine
 from models import User
+from services.log_context import bind_log_context
 
 SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 if not SECRET_KEY:
@@ -40,8 +41,9 @@ def create_access_token(user_id: str) -> str:
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def get_current_user(
+async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    request: Request = None,
 ) -> User:
     token = credentials.credentials
     try:
@@ -56,4 +58,7 @@ def get_current_user(
         user = db.scalar(select(User).where(User.id == user_id))
         if user is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+        if request is not None:
+            request.state.user_id = user.id
+        bind_log_context(user_id=user.id)
         return user

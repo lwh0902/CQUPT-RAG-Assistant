@@ -16,10 +16,15 @@ from sqlalchemy import asc, desc, select
 from sqlalchemy.orm import Session
 
 from database import engine
-from models import ChatSession, Message, User
+from models import ChatSession, Message, User, UserModelSettings
 from rag import get_rag_context_async
-from security import SECRET_KEY, ALGORITHM
+from settings import MODEL_NAME
+from security import SECRET_KEY, ALGORITHM, get_current_user
+from services.confidence import calculate_confidence
 from services.llm import create_glm_completion, get_glm_client, stream_glm_text
+from services.memory_manager import MemoryManager
+from services.retrieval import collect_evidence, format_web_evidence_for_prompt
+from services.log_context import bind_log_context, reset_log_context
 from tools import AVAILABLE_TOOLS_MAP
 
 router = APIRouter(tags=["chat"])
@@ -31,11 +36,12 @@ LONG_TERM_MEMORY_DIR = Path("./chroma_memory_db")
 LONG_TERM_MEMORY_COLLECTION = "chat_long_term_memory"
 DEFAULT_SESSION_TITLE = "新建对话"
 SESSION_TITLE_LIMIT = 18
+memory_manager = MemoryManager()
 
 
 class ChatRequest(BaseModel):
-    user_id: str = Field(
-        ...,
+    user_id: Optional[str] = Field(
+        default=None,
         min_length=5,
         max_length=50,
         description="当前请求用户的唯一标识",
@@ -51,6 +57,10 @@ class ChatRequest(BaseModel):
         min_length=1,
         max_length=2000,
         description="用户最新发送的聊天内容",
+    )
+    web_search_enabled: bool = Field(
+        default=False,
+        description="是否允许本次消息调用联网搜索工具",
     )
 
     @field_validator("new_message")
@@ -107,7 +117,7 @@ def ensure_session_exists(request: ChatRequest) -> None:
             raise HTTPException(status_code=403, detail="无权访问该聊天会话。")
 
 
-def save_messages(request: ChatRequest, ai_reply: str) -> None:
+def save_messages(request: ChatRequest, ai_reply: str) -> int:
     with Session(engine) as db:
         chat_window = db.scalar(
             select(ChatSession).where(ChatSession.id == request.session_id)
@@ -130,10 +140,39 @@ def save_messages(request: ChatRequest, ai_reply: str) -> None:
         )
         db.add_all([user_message, ai_message])
         db.commit()
+        return user_message.id
 
 
-def build_system_prompt(hybrid_context: dict[str, str]) -> str:
+def persist_explicit_memories(
+    user_id: str,
+    session_id: str,
+    content: str,
+    source_message_id: int,
+) -> None:
+    with Session(engine) as db:
+        memory_manager.store_explicit_candidates(
+            db,
+            user_id=user_id,
+            session_id=session_id,
+            content=content,
+            source_message_id=source_message_id,
+        )
+        db.commit()
+
+
+def get_generation_options(user_id: str) -> dict[str, float]:
+    with Session(engine) as db:
+        settings = db.scalar(
+            select(UserModelSettings).where(UserModelSettings.user_id == user_id)
+        )
+        if settings is None:
+            return {"temperature": 0.3, "top_p": 0.8}
+        return {"temperature": settings.temperature, "top_p": settings.top_p}
+
+
+def build_system_prompt(hybrid_context: dict[str, Any]) -> str:
     knowledge = hybrid_context.get("knowledge") or "无"
+    web = hybrid_context.get("web") or "无"
     long_term = hybrid_context.get("long_term") or "无"
     short_term = hybrid_context.get("short_term") or "无"
 
@@ -145,8 +184,11 @@ def build_system_prompt(hybrid_context: dict[str, str]) -> str:
         "3. 在需要时调用工具查询课表。\n"
         '当用户打招呼、寒暄，或者询问“你能做什么”时，'
         "请明确告诉用户你既可以查天气和课表，也可以检索并解答学生手册相关内容。\n"
-        "请优先基于以下参考资料回答问题；如果问题需要实时天气或课表信息，就结合工具结果回答。\n\n"
+        "请严格基于以下参考资料回答问题；如果问题需要实时天气或课表信息，就结合工具结果回答。\n"
+        "网络资料只能引用其中真实提供的链接，不得把自身常识伪装成联网检索结果。"
+        "资料不足或来源冲突时，必须明确说明不确定性。\n\n"
         f"【学生手册知识】\n{knowledge}\n\n"
+        f"【联网检索资料】\n{web}\n\n"
         f"【长期记忆】\n{long_term}\n\n"
         f"【短期记忆】\n{short_term}"
     )
@@ -154,7 +196,7 @@ def build_system_prompt(hybrid_context: dict[str, str]) -> str:
 
 def build_final_messages(
     request: ChatRequest,
-    hybrid_context: dict[str, str],
+    hybrid_context: dict[str, Any],
 ) -> list[dict[str, Any]]:
     return [
         {"role": "system", "content": build_system_prompt(hybrid_context)},
@@ -214,10 +256,10 @@ async def classify_intent(query: str) -> str:
     def _call() -> str:
         client = get_glm_client()
         response = client.chat.completions.create(
-            model="glm-4-flash",
+            model=MODEL_NAME,
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
-            thinking={"type": "disabled"},
+            extra_body={"thinking": {"type": "disabled"}},
         )
         return (response.choices[0].message.content or "").strip().lower()
 
@@ -347,9 +389,9 @@ def summarize_window(messages: list[Message]) -> str:
         f"{transcript}"
     )
     response = get_glm_client().chat.completions.create(
-        model="glm-4.7-flash",
+        model=MODEL_NAME,
         messages=[{"role": "user", "content": prompt}],
-        thinking={"type": "disabled"},
+        extra_body={"thinking": {"type": "disabled"}},
     )
     summary = (response.choices[0].message.content or "").strip()
     if not summary or summary == "NO_MEMORY":
@@ -419,11 +461,14 @@ def persist_long_term_summary(long_term_memory_store, request: ChatRequest) -> N
 # ---------------------------------------------------------------------------
 
 async def assemble_context_and_memory(
+    user_id: str,
     session_id: str,
     current_query: str,
     retriever,
     long_term_memory_store,
-) -> dict[str, str]:
+    tool_registry=None,
+    web_search_enabled: bool = False,
+) -> dict[str, Any]:
     def get_short_term() -> str:
         with Session(engine) as db:
             stmt = (
@@ -440,8 +485,11 @@ async def assemble_context_and_memory(
         return "\n".join(f"[{message.role}]: {message.content}" for message in messages)
 
     def get_long_term() -> str:
+        with Session(engine) as db:
+            structured_memory = memory_manager.render_active_context(db, user_id)
+
         if long_term_memory_store is None:
-            return ""
+            return structured_memory
 
         docs = long_term_memory_store.similarity_search(
             query=current_query,
@@ -453,30 +501,34 @@ async def assemble_context_and_memory(
                 ]
             },
         )
-        if not docs:
-            return ""
-
-        return "\n\n".join(
+        summary_memory = "\n\n".join(
             doc.page_content.strip()
             for doc in docs
             if getattr(doc, "page_content", "").strip()
         )
+        return "\n\n".join(item for item in (structured_memory, summary_memory) if item)
 
-    async def get_knowledge() -> str:
-        if retriever is None:
-            return ""
-        return await get_rag_context_async(current_query, retriever)
+    async def get_retrieval():
+        return await collect_evidence(
+            current_query,
+            retriever=retriever,
+            tools=tool_registry,
+            web_search_enabled=web_search_enabled,
+        )
 
-    short_term, long_term, knowledge = await asyncio.gather(
+    short_term, long_term, retrieval = await asyncio.gather(
         asyncio.to_thread(get_short_term),
         asyncio.to_thread(get_long_term),
-        get_knowledge(),
+        get_retrieval(),
     )
 
     return {
         "short_term": short_term,
         "long_term": long_term,
-        "knowledge": knowledge,
+        "knowledge": retrieval.knowledge_context,
+        "web": format_web_evidence_for_prompt(retrieval.web_sources),
+        "sources": retrieval.sources,
+        "retrieval_decision": retrieval.decision,
     }
 
 
@@ -634,25 +686,61 @@ async def run_agent_loop_stream(
 # Routes
 # ---------------------------------------------------------------------------
 
+def build_retrieval_refusal(retrieval_decision: str) -> str:
+    if retrieval_decision == "insufficient":
+        return "当前知识库检索到了相关片段，但证据不足以支持可靠回答。建议开启联网搜索后重试；网络结果仅供参考，请以学校官网和正式文件为准。"
+    return "当前知识库未收录可核验的相关依据。建议开启联网搜索后重试；网络结果仅供参考，请以学校官网和正式文件为准。"
+
 @router.post("/chat")
-async def chat(request_body: ChatRequest, request: Request) -> dict[str, str]:
+async def chat(
+    request_body: ChatRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    request_body.user_id = current_user.id
+    request.state.session_id = request_body.session_id
+    bind_log_context(user_id=current_user.id, session_id=request_body.session_id)
     app_state = request.app.state
     await asyncio.to_thread(ensure_session_exists, request_body)
+    generation_options = await asyncio.to_thread(get_generation_options, request_body.user_id)
     hybrid_context = await assemble_context_and_memory(
+        user_id=request_body.user_id,
         session_id=request_body.session_id,
         current_query=request_body.new_message,
         retriever=getattr(app_state, "retriever", None),
         long_term_memory_store=getattr(app_state, "long_term_memory_store", None),
+        tool_registry=getattr(app_state, "tool_registry", None),
+        web_search_enabled=request_body.web_search_enabled,
     )
-    final_messages = build_final_messages(request_body, hybrid_context)
-    ai_reply = await run_agent_loop(final_messages)
-    await asyncio.to_thread(save_messages, request_body, ai_reply)
+    retrieval_decision = hybrid_context["retrieval_decision"]
+    if retrieval_decision in {"out_of_scope", "insufficient"}:
+        ai_reply = build_retrieval_refusal(retrieval_decision)
+    else:
+        final_messages = build_final_messages(request_body, hybrid_context)
+        ai_reply = await run_agent_loop(final_messages)
+    user_message_id = await asyncio.to_thread(save_messages, request_body, ai_reply)
+    await asyncio.to_thread(
+        persist_explicit_memories,
+        request_body.user_id,
+        request_body.session_id,
+        request_body.new_message,
+        user_message_id,
+    )
     await asyncio.to_thread(
         persist_long_term_summary,
         getattr(app_state, "long_term_memory_store", None),
         request_body,
     )
-    return {"reply": ai_reply}
+    confidence = calculate_confidence(hybrid_context.get("sources", []))
+    return {
+        "reply": ai_reply,
+        "sources": [source.to_dict() for source in hybrid_context.get("sources", [])],
+        "confidence": confidence.score,
+        "confidence_level": confidence.level,
+        "evidence_summary": confidence.evidence_summary,
+        "uncertain_points": confidence.uncertain_points,
+        "retrieval_decision": hybrid_context["retrieval_decision"],
+    }
 
 
 @router.websocket("/ws/chat")
@@ -715,9 +803,16 @@ async def websocket_chat(websocket: WebSocket) -> None:
     app_state = websocket.app.state
     retriever = getattr(app_state, "retriever", None)
     long_term_memory_store = getattr(app_state, "long_term_memory_store", None)
+    tool_registry = getattr(app_state, "tool_registry", None)
 
+    context_tokens = bind_log_context(
+        request_id=uuid.uuid4().hex,
+        user_id=request.user_id,
+        session_id=request.session_id,
+    )
     try:
         await asyncio.to_thread(ensure_session_exists, request)
+        generation_options = await asyncio.to_thread(get_generation_options, request.user_id)
 
         await websocket.send_json({
             "type": "thinking",
@@ -738,7 +833,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
 
             reply_parts: list[str] = []
             first_token = True
-            async for token in stream_glm_text(chat_messages):
+            async for token in stream_glm_text(chat_messages, **generation_options):
                 if first_token:
                     await websocket.send_json({"type": "start"})
                     first_token = False
@@ -749,28 +844,56 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 await websocket.send_json({"type": "start"})
 
             ai_reply = "".join(reply_parts)
-            await asyncio.to_thread(save_messages, request, ai_reply)
+            user_message_id = await asyncio.to_thread(save_messages, request, ai_reply)
+            await asyncio.to_thread(
+                persist_explicit_memories,
+                request.user_id,
+                request.session_id,
+                request.new_message,
+                user_message_id,
+            )
             await websocket.send_json({"type": "end", "sources": []})
         else:
             await websocket.send_json({
                 "type": "thinking",
-                "step": "retrieving",
-                "message": "正在检索知识库",
+                "step": "knowledge_retrieval",
+                "message": "正在检索校内知识库",
             })
+            if request.web_search_enabled:
+                await websocket.send_json({
+                    "type": "thinking",
+                    "step": "web_search",
+                    "message": "正在通过联网搜索工具查询互联网",
+                })
 
             hybrid_context = await assemble_context_and_memory(
+                user_id=request.user_id,
                 session_id=request.session_id,
                 current_query=request.new_message,
                 retriever=retriever,
                 long_term_memory_store=long_term_memory_store,
+                tool_registry=tool_registry,
+                web_search_enabled=request.web_search_enabled,
             )
 
-            retrieval_count = len(hybrid_context.get("knowledge", "") or "")
+            if hybrid_context["retrieval_decision"] in {"out_of_scope", "insufficient"}:
+                ai_reply = build_retrieval_refusal(hybrid_context["retrieval_decision"])
+                await websocket.send_json({"type": "start"})
+                await websocket.send_json({"type": "delta", "content": ai_reply})
+                user_message_id = await asyncio.to_thread(save_messages, request, ai_reply)
+                await asyncio.to_thread(persist_explicit_memories, request.user_id, request.session_id, request.new_message, user_message_id)
+                await websocket.send_json({
+                    "type": "end",
+                    "sources": [],
+                    "retrieval_decision": hybrid_context["retrieval_decision"],
+                })
+                return
+
             await websocket.send_json({
                 "type": "thinking",
-                "step": "retrieved",
-                "message": "检索完成",
-                "detail": "已获取相关参考资料" if retrieval_count > 0 else "未检索到相关内容",
+                "step": "evidence_fusion",
+                "message": "正在整理可核验的参考资料",
+                "detail": "已获取相关参考资料" if hybrid_context.get("sources") else "未检索到相关内容",
             })
 
             await websocket.send_json({
@@ -783,7 +906,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
 
             reply_parts: list[str] = []
             first_token = True
-            async for token in stream_glm_text(final_messages):
+            async for token in stream_glm_text(final_messages, **generation_options):
                 if first_token:
                     await websocket.send_json({"type": "start"})
                     first_token = False
@@ -794,12 +917,28 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 await websocket.send_json({"type": "start"})
 
             ai_reply = "".join(reply_parts)
-            await asyncio.to_thread(save_messages, request, ai_reply)
+            user_message_id = await asyncio.to_thread(save_messages, request, ai_reply)
+            await asyncio.to_thread(
+                persist_explicit_memories,
+                request.user_id,
+                request.session_id,
+                request.new_message,
+                user_message_id,
+            )
             await asyncio.to_thread(persist_long_term_summary, long_term_memory_store, request)
 
-            sources = build_sources_from_knowledge(hybrid_context.get("knowledge", ""))
-
-            await websocket.send_json({"type": "end", "sources": sources})
+            confidence = calculate_confidence(hybrid_context.get("sources", []))
+            await websocket.send_json(
+                {
+                    "type": "end",
+                    "sources": [source.to_dict() for source in hybrid_context.get("sources", [])],
+                    "confidence": confidence.score,
+                    "confidence_level": confidence.level,
+                    "evidence_summary": confidence.evidence_summary,
+                    "uncertain_points": confidence.uncertain_points,
+                    "retrieval_decision": hybrid_context["retrieval_decision"],
+                }
+            )
     except HTTPException as exc:
         await websocket.send_json(
             {
@@ -816,6 +955,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
             }
         )
     finally:
+        reset_log_context(context_tokens)
         try:
             await websocket.close()
         except Exception:

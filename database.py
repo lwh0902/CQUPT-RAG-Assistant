@@ -15,6 +15,7 @@ MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "123456")
 MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
 MYSQL_PORT = os.getenv("MYSQL_PORT", "3306")
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "cqupt_rag")
+SQL_ECHO = os.getenv("SQL_ECHO", "false").lower() == "true"
 
 DATABASE_URL = URL.create(
     drivername="mysql+pymysql",
@@ -28,7 +29,7 @@ DATABASE_URL = URL.create(
 
 engine = create_engine(
     DATABASE_URL,
-    echo=True,
+    echo=SQL_ECHO,
     pool_pre_ping=True,
 )
 
@@ -47,7 +48,7 @@ class Base(DeclarativeBase):
 def ensure_database_exists() -> None:
     server_engine = create_engine(
         DATABASE_URL.set(database=None),
-        echo=True,
+        echo=SQL_ECHO,
         pool_pre_ping=True,
         isolation_level="AUTOCOMMIT",
     )

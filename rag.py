@@ -11,6 +11,7 @@ RAG 主流程模块。
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 
 from dotenv import load_dotenv
@@ -26,7 +27,7 @@ load_dotenv()
 _bm25_index = None
 
 # 当前检索策略，可通过 set_strategy() 切换
-_current_strategy = "rerank"
+_current_strategy = "hybrid"
 
 
 def set_strategy(strategy: str) -> None:
@@ -159,8 +160,7 @@ def _retrieve_rerank(question: str, retriever) -> list:
 def _retrieve_rewrite(question: str, retriever) -> list:
     """策略 rewrite：查询改写 + 向量检索 + 关键词重排序。"""
     from services.rewriter import rewrite_query
-    client = get_glm_client()
-    sub_queries = rewrite_query(client, question)
+    sub_queries = _rewrite_or_original(question)
 
     # 多个子查询分别检索，合并去重
     seen = set()
@@ -180,8 +180,7 @@ def _retrieve_hybrid(question: str, retriever) -> list:
     from services.rewriter import rewrite_query
     from services.hybrid import hybrid_search
 
-    client = get_glm_client()
-    sub_queries = rewrite_query(client, question)
+    sub_queries = _rewrite_or_original(question)
 
     bm25 = init_bm25_index()
 
@@ -213,6 +212,17 @@ def _retrieve_hybrid(question: str, retriever) -> list:
     return reciprocal_rank_fusion(all_result_sets, k=60, top_k=RETRIEVAL_TOP_K)
 
 
+def _rewrite_or_original(question: str) -> list[str]:
+    """Keep retrieval available when the optional rewrite request is unavailable."""
+    from services.rewriter import rewrite_query
+
+    try:
+        return rewrite_query(get_glm_client(), question)
+    except Exception:
+        logging.warning("Query rewrite unavailable; using original query", exc_info=True)
+        return [question]
+
+
 def ask_question(question: str, retriever) -> tuple[str, str, list[int]]:
     question = (question or "").strip()
     if not question:
@@ -239,7 +249,7 @@ def ask_question(question: str, retriever) -> tuple[str, str, list[int]]:
             model=MODEL_NAME,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
-            thinking={"type": "disabled"},
+            extra_body={"thinking": {"type": "disabled"}},
         )
         answer = response.choices[0].message.content
         return answer, context, source_pages

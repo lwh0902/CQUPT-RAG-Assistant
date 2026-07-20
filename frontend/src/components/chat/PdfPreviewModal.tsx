@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { AlertCircle, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
 import Modal from '../ui/Modal'
 import { api } from '../../api/client'
@@ -21,6 +21,7 @@ export default function PdfPreviewModal({
   navigable = false,
   totalPages,
 }: PdfPreviewModalProps) {
+  const swipeStartY = useRef<number | null>(null)
   const [imgStatus, setImgStatus] = useState<'loading' | 'loaded' | 'error'>('loading')
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   const [currentPage, setCurrentPage] = useState<number>(source?.page ?? 1)
@@ -33,8 +34,8 @@ export default function PdfPreviewModal({
 
   useEffect(() => {
     if (source) {
-      setCurrentPage(source.page)
-      setPageInput(String(source.page))
+      setCurrentPage(source.page ?? 1)
+      setPageInput(String(source.page ?? 1))
     }
   }, [source])
 
@@ -105,6 +106,20 @@ export default function PdfPreviewModal({
 
   const showSnippet = !navigable
 
+  const handlePreviewPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!navigable || !total) return
+    swipeStartY.current = event.clientY
+  }
+
+  const handlePreviewPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!navigable || !total || swipeStartY.current === null) return
+    const distance = event.clientY - swipeStartY.current
+    swipeStartY.current = null
+    if (Math.abs(distance) < 72) return
+    if (distance < 0) goNext()
+    else goPrev()
+  }
+
   return (
     <Modal
       open={source !== null}
@@ -121,7 +136,13 @@ export default function PdfPreviewModal({
           showSnippet ? 'md:grid-cols-[1.4fr_1fr]' : ''
         }`}
       >
-        <div className="relative flex items-center justify-center overflow-auto bg-[var(--bg-secondary)] p-4">
+        <div
+          className={`relative flex items-center justify-center overflow-auto bg-[var(--bg-secondary)] p-4 ${navigable && total ? 'touch-pan-x' : ''}`}
+          aria-label="PDF 页面预览"
+          onPointerDown={handlePreviewPointerDown}
+          onPointerUp={handlePreviewPointerUp}
+          onPointerCancel={() => { swipeStartY.current = null }}
+        >
           {!canPreview ? (
             <div className="flex flex-col items-center gap-2 px-6 py-12 text-center text-sm text-[var(--text-tertiary)]">
               <AlertCircle className="h-6 w-6" />
@@ -179,6 +200,7 @@ export default function PdfPreviewModal({
           </button>
           <div className="flex items-center gap-2 text-[var(--text-secondary)]">
             <input
+              aria-label="跳转页码"
               value={pageInput}
               onChange={(e) => setPageInput(e.target.value.replace(/\D/g, ''))}
               onBlur={(e) => goToPage(e.target.value)}

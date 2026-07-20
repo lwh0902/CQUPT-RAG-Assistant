@@ -61,16 +61,29 @@ export interface Message {
   role: 'user' | 'assistant'
   content: string
   sources?: Source[]
+  confidence_level?: ConfidenceLevel
+  evidence_summary?: string
+  uncertain_points?: string[]
   created_at: string
+  retrieval_decision?: 'supported' | 'web_only' | 'out_of_scope' | 'insufficient'
 }
 
 export interface Source {
+  id?: string
+  source_type?: 'knowledge_base' | 'web'
+  title?: string
+  url?: string
+  site_name?: string
   document_id?: string
   document_name?: string
-  page: number
+  page?: number
   snippet?: string
   preview?: string
+  published_at?: string
+  retrieved_at?: string
 }
+
+export type ConfidenceLevel = 'high' | 'medium' | 'low' | 'unknown'
 
 export interface SessionMessagesResponse {
   session_id: string
@@ -115,6 +128,11 @@ export interface WSMessage {
   detail?: string
   content?: string
   sources?: Source[]
+  confidence?: number
+  confidence_level?: ConfidenceLevel
+  evidence_summary?: string
+  uncertain_points?: string[]
+  retrieval_decision?: 'supported' | 'web_only' | 'out_of_scope' | 'insufficient'
 }
 
 export function createWebSocket(

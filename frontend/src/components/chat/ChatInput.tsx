@@ -43,7 +43,7 @@ export default function ChatInput({ onSend, isStreaming, onStop }: ChatInputProp
   const canSend = value.trim().length > 0 && !isStreaming
 
   return (
-    <div className="rounded-[28px] border border-[var(--border-input)] bg-[var(--bg-input)] px-3 py-2 shadow-[0_12px_32px_rgba(0,0,0,0.08)] transition-colors focus-within:border-[var(--text-tertiary)]">
+    <div data-testid="chat-composer" className="rounded-[28px] border border-[var(--border-input)] bg-[var(--bg-input)] px-3 py-2 shadow-[0_12px_32px_rgba(0,0,0,0.08)] transition-colors focus-within:border-[var(--text-tertiary)]">
       <div className="flex items-end gap-2">
         <button
           type="button"

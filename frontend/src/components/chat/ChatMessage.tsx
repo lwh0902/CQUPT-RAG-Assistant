@@ -5,7 +5,7 @@ import SourceCitation from './SourceCitation'
 import type { ThinkingStep } from '../../store/chat'
 import { useChatStore } from '../../store/chat'
 import type { Message, Source } from '../../api/client'
-import { Check, Copy, RotateCcw, ThumbsDown, ThumbsUp } from 'lucide-react'
+import { Check, Copy, Globe2, RotateCcw, ThumbsDown, ThumbsUp } from 'lucide-react'
 import { useState } from 'react'
 
 interface ChatMessageProps {
@@ -25,6 +25,7 @@ export default function ChatMessage({
 }: ChatMessageProps) {
   const [copied, setCopied] = useState(false)
   const regenerateLast = useChatStore((state) => state.regenerateLast)
+  const retryLastWithWebSearch = useChatStore((state) => state.retryLastWithWebSearch)
 
   if (message.role === 'user') {
     return (
@@ -99,7 +100,22 @@ export default function ChatMessage({
             )}
           </div>
         )}
-        {sources.length > 0 && <SourceCitation sources={sources} />}
+        {sources.length > 0 && (
+          <SourceCitation
+            sources={sources}
+            confidenceLevel={isStreaming ? undefined : message.confidence_level}
+            evidenceSummary={isStreaming ? undefined : message.evidence_summary}
+            uncertainPoints={isStreaming ? undefined : message.uncertain_points}
+          />
+        )}
+        {(message.retrieval_decision === 'out_of_scope' || message.retrieval_decision === 'insufficient') && (
+          <div className="mt-3 border-l-2 border-amber-500 px-3 py-2 text-xs text-[var(--text-secondary)]">
+            <p>{message.retrieval_decision === 'insufficient' ? '当前知识库存在相关片段，但证据不足以支持可靠回答。' : '当前知识库未收录可核验依据。'} 网络结果仅供参考，请以学校官网和正式文件为准。</p>
+            <button onClick={retryLastWithWebSearch} className="mt-2 inline-flex items-center gap-1.5 text-emerald-700 hover:underline dark:text-emerald-300" aria-label="开启联网搜索后重试">
+              <Globe2 className="h-3.5 w-3.5" />开启联网搜索后重试
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
