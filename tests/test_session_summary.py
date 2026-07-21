@@ -29,7 +29,7 @@ def test_session_summary_returns_structured_user_visible_result(monkeypatch) -> 
     class FakeClient:
         chat = type("Chat", (), {"completions": FakeCompletions()})()
 
-    monkeypatch.setattr(session_summary, "get_glm_client", lambda: FakeClient())
+    monkeypatch.setattr(session_summary, "get_llm_client", lambda: FakeClient())
 
     result = session_summary.summarize_conversation([
         {"role": "user", "content": "奖学金怎么申请？"},

@@ -1,4 +1,4 @@
-from routers.chat import ChatRequest, build_system_prompt
+from routers.chat import ChatRequest, _sse_pack, build_system_prompt
 
 
 def test_chat_request_disables_web_search_by_default() -> None:
@@ -23,3 +23,10 @@ def test_chat_prompt_includes_only_retrieved_web_evidence() -> None:
 
     assert "https://cqupt.edu.cn/notice/1" in prompt
     assert "不得把自身常识伪装成联网检索结果" in prompt
+
+
+def test_sse_pack_uses_event_stream_data_prefix() -> None:
+    packed = _sse_pack({"type": "delta", "content": "你好"})
+    assert packed.startswith("data: ")
+    assert packed.endswith("\n\n")
+    assert '"type": "delta"' in packed or '"type":"delta"' in packed

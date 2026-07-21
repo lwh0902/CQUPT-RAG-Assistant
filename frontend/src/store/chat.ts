@@ -1,6 +1,13 @@
 import { create } from 'zustand'
-import type { ConfidenceLevel, Session, Message, Source, WSMessage } from '../api/client'
-import { api, createWebSocket } from '../api/client'
+import type {
+  ChatStreamController,
+  ConfidenceLevel,
+  Session,
+  Message,
+  Source,
+  StreamMessage,
+} from '../api/client'
+import { api, streamChat } from '../api/client'
 import { useToastStore } from './toast'
 
 export interface ThinkingStep {
@@ -31,7 +38,7 @@ interface ChatState {
   currentEvidenceSummary?: string
   currentUncertainPoints: string[]
   webSearchEnabled: boolean
-  ws: WebSocket | null
+  streamController: ChatStreamController | null
 
   fetchSessions: () => Promise<void>
   createSession: () => Promise<string | null>
@@ -60,7 +67,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   currentEvidenceSummary: undefined,
   currentUncertainPoints: [],
   webSearchEnabled: false,
-  ws: null,
+  streamController: null,
 
   fetchSessions: async () => {
     try {
@@ -208,112 +215,108 @@ export const useChatStore = create<ChatState>((set, get) => ({
       webSearchEnabled: false,
     }))
 
-    if (get().ws) get().ws!.close()
+    get().streamController?.abort()
 
-    const ws = createWebSocket(
-      (data: WSMessage) => {
-        switch (data.type) {
-          case 'thinking': {
-            set((prev) => {
-              const steps = [...prev.thinkingSteps]
-              const existingIndex = steps.findIndex((s) => s.step === data.step)
-              const newStep: ThinkingStep = {
-                step: data.step ?? '',
-                message: data.message ?? '',
-                detail: data.detail,
-                status: 'in_progress',
+    const streamController = streamChat(
+      {
+        session_id: sessionId,
+        new_message: content,
+        web_search_enabled: webSearchEnabled,
+      },
+      {
+        onMessage: (data: StreamMessage) => {
+          switch (data.type) {
+            case 'thinking': {
+              set((prev) => {
+                const steps = [...prev.thinkingSteps]
+                const existingIndex = steps.findIndex((s) => s.step === data.step)
+                const newStep: ThinkingStep = {
+                  step: data.step ?? '',
+                  message: data.message ?? '',
+                  detail: data.detail,
+                  status: 'in_progress',
+                }
+                for (let i = 0; i < steps.length; i++) {
+                  steps[i] = { ...steps[i], status: 'completed' }
+                }
+                if (existingIndex >= 0) {
+                  steps[existingIndex] = newStep
+                } else {
+                  steps.push(newStep)
+                }
+                return { thinkingSteps: steps }
+              })
+              break
+            }
+            case 'start': {
+              break
+            }
+            case 'delta': {
+              set((prev) => {
+                const thinkingSteps = prev.thinkingSteps.some((s) => s.status !== 'completed')
+                  ? prev.thinkingSteps.map((s) => ({ ...s, status: 'completed' as const }))
+                  : prev.thinkingSteps
+                return {
+                  thinkingSteps,
+                  currentReply: prev.currentReply + (data.content ?? ''),
+                }
+              })
+              break
+            }
+            case 'end': {
+              const assistantMessage: Message = {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                content: get().currentReply,
+                sources: data.sources,
+                confidence_level: data.confidence_level,
+                evidence_summary: data.evidence_summary,
+                uncertain_points: data.uncertain_points,
+                retrieval_decision: data.retrieval_decision,
+                created_at: new Date().toISOString(),
               }
-              for (let i = 0; i < steps.length; i++) {
-                steps[i] = { ...steps[i], status: 'completed' }
-              }
-              if (existingIndex >= 0) {
-                steps[existingIndex] = newStep
+              set((prev) => ({
+                messages: [...prev.messages, assistantMessage],
+                isStreaming: false,
+                currentSources: data.sources ?? [],
+                currentConfidenceLevel: data.confidence_level,
+                currentEvidenceSummary: data.evidence_summary,
+                currentUncertainPoints: data.uncertain_points ?? [],
+                streamController: null,
+              }))
+              get().fetchSessions()
+              break
+            }
+            case 'error': {
+              set({ isStreaming: false, streamController: null })
+              const msg = data.message ?? '未知错误'
+              if (msg.includes('429') || msg.includes('访问量过大')) {
+                useToastStore.getState().addToast('服务繁忙，请稍后再试', 'error')
               } else {
-                steps.push(newStep)
+                useToastStore.getState().addToast(msg, 'error')
               }
-              return { thinkingSteps: steps }
-            })
-            break
-          }
-          case 'start': {
-            break
-          }
-          case 'delta': {
-            set((prev) => {
-              const thinkingSteps = prev.thinkingSteps.some((s) => s.status !== 'completed')
-                ? prev.thinkingSteps.map((s) => ({ ...s, status: 'completed' as const }))
-                : prev.thinkingSteps
-              return {
-                thinkingSteps,
-                currentReply: prev.currentReply + (data.content ?? ''),
-              }
-            })
-            break
-          }
-          case 'end': {
-            const assistantMessage: Message = {
-              id: crypto.randomUUID(),
-              role: 'assistant',
-              content: get().currentReply,
-              sources: data.sources,
-              confidence_level: data.confidence_level,
-              evidence_summary: data.evidence_summary,
-              uncertain_points: data.uncertain_points,
-              retrieval_decision: data.retrieval_decision,
-              created_at: new Date().toISOString(),
+              break
             }
-            set((prev) => ({
-              messages: [...prev.messages, assistantMessage],
-              isStreaming: false,
-              currentSources: data.sources ?? [],
-              currentConfidenceLevel: data.confidence_level,
-              currentEvidenceSummary: data.evidence_summary,
-              currentUncertainPoints: data.uncertain_points ?? [],
-            }))
-            // Refresh session list to sync title
-            get().fetchSessions()
-            break
           }
-          case 'error': {
-            set({ isStreaming: false })
-            const msg = data.message ?? '未知错误'
-            if (msg.includes('429') || msg.includes('访问量过大')) {
-              useToastStore.getState().addToast('服务繁忙，请稍后再试', 'error')
-            } else {
-              useToastStore.getState().addToast(msg, 'error')
-            }
-            break
-          }
-        }
-      },
-      () => {
-        useToastStore.getState().addToast('连接中断，请重试', 'error')
-        set({ isStreaming: false })
-      },
-      () => {
-        set((prev) => (prev.isStreaming ? { isStreaming: false } : {}))
+        },
+        onError: (error) => {
+          useToastStore.getState().addToast(error.message || '连接中断，请重试', 'error')
+          set({ isStreaming: false, streamController: null })
+        },
+        onClose: () => {
+          set((prev) => (prev.isStreaming ? { isStreaming: false, streamController: null } : { streamController: null }))
+        },
       }
     )
 
-    ws.onopen = () => {
-      ws.send(
-        JSON.stringify({
-          user_id: userId,
-          session_id: sessionId,
-          new_message: content,
-          web_search_enabled: webSearchEnabled,
-        })
-      )
-    }
-
-    set({ ws })
+    set({ streamController })
   },
 
   setWebSearchEnabled: (enabled: boolean) => set({ webSearchEnabled: enabled }),
 
   stopStreaming: () => {
     const state = get()
-    state.ws?.close()
+    state.streamController?.abort()
 
     const partialReply = state.currentReply.trim()
     set((prev) => ({
@@ -332,7 +335,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isStreaming: false,
       thinkingSteps: [],
       currentReply: '',
-      ws: null,
+      streamController: null,
     }))
   },
 
@@ -381,12 +384,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   resetStream: () => {
-    set({ thinkingSteps: [], currentReply: '', currentSources: [], currentConfidenceLevel: undefined, currentEvidenceSummary: undefined, currentUncertainPoints: [] })
+    set({
+      thinkingSteps: [],
+      currentReply: '',
+      currentSources: [],
+      currentConfidenceLevel: undefined,
+      currentEvidenceSummary: undefined,
+      currentUncertainPoints: [],
+    })
   },
 
   cleanup: () => {
-    const { ws } = get()
-    if (ws) ws.close()
-    set({ ws: null })
+    get().streamController?.abort()
+    set({ streamController: null })
   },
 }))

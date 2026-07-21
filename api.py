@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
+
+# Load env before importing modules that validate secrets at import time.
+load_dotenv()
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,8 +29,6 @@ from services.web_search import build_tool_registry
 from services.logging_config import configure_logging
 from vector_store import get_embeddings
 from database import Base, engine, ensure_database_exists
-
-load_dotenv()
 
 configure_logging(
     log_dir=Path(os.getenv("LOG_DIR", "logs")),

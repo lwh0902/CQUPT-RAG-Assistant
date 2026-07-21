@@ -12,9 +12,9 @@ def test_completion_forwards_user_generation_options(monkeypatch) -> None:
     class FakeClient:
         chat = type("Chat", (), {"completions": FakeCompletions()})()
 
-    monkeypatch.setattr(llm, "get_glm_client", lambda: FakeClient())
+    monkeypatch.setattr(llm, "get_llm_client", lambda: FakeClient())
 
-    llm.create_glm_completion(
+    llm.create_llm_completion(
         [{"role": "user", "content": "你好"}],
         with_tools=False,
         temperature=0.6,

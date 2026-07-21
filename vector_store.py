@@ -134,12 +134,19 @@ def load_policy_documents(policy_documents: list[dict] | None = None) -> list[Do
 
 
 def split_documents(documents):
-    """使用递归切分器对 PDF 文档做语义友好的分块。"""
+    """使用递归切分器对 PDF 文档做语义友好的分块（旧路径 fallback）。"""
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=600,
         chunk_overlap=80,
     )
     return text_splitter.split_documents(documents)
+
+
+def build_parent_child_chunks(documents: list[Document]) -> tuple[list[Document], dict]:
+    """条款级 child 检索块 + parent 上下文表。"""
+    from services.parent_child_index import build_parent_child_corpus
+
+    return build_parent_child_corpus(documents)
 
 
 def save_index_meta(meta: dict) -> None:
@@ -178,24 +185,21 @@ def is_vector_store_ready(persist_dir: Path = PERSIST_DIRECTORY) -> bool:
 
 
 def clear_existing_collection(persist_dir: Path = PERSIST_DIRECTORY) -> None:
-    """建新库前先彻底清理旧集合，防止重复执行脚本导致文档叠加污染。"""
-    if not persist_dir.exists():
-        return
+    """建新库前彻底清理持久化目录，避免旧索引叠加污染。
 
-    # 先尝试从 Chroma 客户端层面删除同名集合。
-    try:
-        import chromadb
-
-        client = chromadb.PersistentClient(path=str(persist_dir))
-        try:
-            client.delete_collection(name=COLLECTION_NAME)
-        except Exception:
-            pass
-    except Exception:
-        pass
-
-    # 再清空整个持久化目录，确保不会残留旧索引文件。
-    shutil.rmtree(persist_dir, ignore_errors=True)
+    不先 PersistentClient.open 再删：部分 Chroma 版本会把目录锁成
+    readonly / 残留坏库，导致后续 from_documents 失败。
+    """
+    if persist_dir.exists():
+        shutil.rmtree(persist_dir)
+    # Ensure parent path is free of stale SQLite sidecars if any.
+    for sidecar in (
+        Path(str(persist_dir) + ".sqlite3"),
+        Path(str(persist_dir) + ".sqlite3-shm"),
+        Path(str(persist_dir) + ".sqlite3-wal"),
+    ):
+        if sidecar.exists():
+            sidecar.unlink()
 
 
 def build_vector_store(
@@ -204,11 +208,21 @@ def build_vector_store(
     policy_documents: list[dict] | None = None,
 ) -> dict:
     """从本地政策文档重建 Chroma 向量库，并返回建库信息。"""
+    from services.parent_child_index import PARENT_STORE_PATH, save_parent_store
+
     clear_existing_collection(persist_dir)
     persist_dir.mkdir(parents=True, exist_ok=True)
 
     documents = load_policy_documents(policy_documents)
-    chunks = split_documents(documents)
+    # Prefer clause-level child chunks; fallback to recursive splitter if parse empty.
+    chunks, parent_store = build_parent_child_chunks(documents)
+    splitter_version = "parent_child_article_v1"
+    if not chunks:
+        chunks = split_documents(documents)
+        parent_store = {}
+        splitter_version = "recursive_char_fallback"
+    save_parent_store(parent_store, PARENT_STORE_PATH)
+
     embeddings = get_embeddings()
 
     vector_store = Chroma.from_documents(
@@ -224,12 +238,15 @@ def build_vector_store(
 
     meta = {
         "status": "rebuilt",
-        "message": "已根据本地政策文档重建 Chroma 向量库。",
+        "message": "已根据本地政策文档重建 Chroma 向量库（parent/child）。",
         "pdf_path": str(pdf_path),
         "collection_name": COLLECTION_NAME,
         "document_count": len({doc.metadata.get("document_id") for doc in documents}),
         "page_count": len(documents),
         "chunk_count": len(chunks),
+        "parent_count": len(parent_store),
+        "splitter_version": splitter_version,
+        "parent_store_path": str(PARENT_STORE_PATH),
         "documents": [
             {
                 key: item[key]
@@ -275,6 +292,9 @@ def create_or_load_retriever(
             "document_count": meta.get("document_count"),
             "page_count": meta.get("page_count"),
             "chunk_count": meta.get("chunk_count"),
+            "parent_count": meta.get("parent_count"),
+            "splitter_version": meta.get("splitter_version"),
+            "parent_store_path": meta.get("parent_store_path"),
             "documents": meta.get("documents", []),
             "updated_at": meta.get("updated_at"),
         }

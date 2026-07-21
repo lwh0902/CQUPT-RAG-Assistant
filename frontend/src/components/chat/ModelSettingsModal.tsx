@@ -50,6 +50,9 @@ export default function ModelSettingsModal() {
       </button>
       <Modal open={open} onClose={() => setOpen(false)} title="模型设置" className="max-w-md">
         <div className="space-y-6 p-5">
+          <p className="text-xs leading-5 text-[var(--text-tertiary)]">
+            制度问答建议保持偏低设置，回答会更稳、更贴材料；调高后更灵活，但更容易发挥。
+          </p>
           <label className="block space-y-2 text-sm text-[var(--text-primary)]">
             <span className="flex items-center justify-between"><span>温度</span><span className="text-[var(--text-secondary)]">{temperature.toFixed(1)}</span></span>
             <input
@@ -63,6 +66,9 @@ export default function ModelSettingsModal() {
               onPointerUp={() => save()}
               className="w-full accent-emerald-500"
             />
+            <span className="block text-xs leading-5 text-[var(--text-tertiary)]">
+              控制回答稳不稳：越低越严谨、少发挥；越高越活泼，也可能更不准。
+            </span>
           </label>
           <label className="block space-y-2 text-sm text-[var(--text-primary)]">
             <span className="flex items-center justify-between"><span>多样性</span><span className="text-[var(--text-secondary)]">{topP.toFixed(1)}</span></span>
@@ -77,6 +83,9 @@ export default function ModelSettingsModal() {
               onPointerUp={() => save()}
               className="w-full accent-emerald-500"
             />
+            <span className="block text-xs leading-5 text-[var(--text-tertiary)]">
+              控制用词宽不宽：越低越集中、更单一；越高表达更丰富，但可能更绕。
+            </span>
           </label>
         </div>
       </Modal>

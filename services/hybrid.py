@@ -81,22 +81,26 @@ def reciprocal_rank_fusion(
     result_sets: list[list[Document]],
     k: int = 60,
     top_k: int = 3,
+    weights: list[float] | None = None,
 ) -> list[Document]:
     """
     RRF 融合：多路检索结果按排名倒数加权合并。
 
-    score(doc) = Σ 1/(k + rank_i)
+    score(doc) = Σ weight_i / (k + rank_i)
     """
     rrf_scores: dict[int, float] = {}
     doc_map: dict[int, Document] = {}
+    if weights is None:
+        weights = [1.0] * len(result_sets)
+    if len(weights) != len(result_sets):
+        raise ValueError("weights length must match result_sets length")
 
-    for results in result_sets:
+    for results, weight in zip(result_sets, weights):
         for rank, doc in enumerate(results):
-            doc_id = id(doc)
             # 用 content hash 作为稳定 key（id() 可能重复）
             stable_key = hash(doc.page_content)
             doc_map[stable_key] = doc
-            rrf_scores[stable_key] = rrf_scores.get(stable_key, 0.0) + 1.0 / (k + rank + 1)
+            rrf_scores[stable_key] = rrf_scores.get(stable_key, 0.0) + float(weight) / (k + rank + 1)
 
     ranked = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
     return [doc_map[key] for key, _ in ranked[:top_k]]

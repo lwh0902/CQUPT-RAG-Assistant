@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from services.llm import get_glm_client
+from services.llm import get_llm_client
 from settings import MODEL_NAME
 
 
@@ -29,7 +29,7 @@ def summarize_conversation(messages: list[dict[str, Any]]) -> ConversationSummar
         '字段固定为 topic、confirmed_points、open_questions、next_actions，后三项都是字符串数组。\n\n'
         f"{transcript}"
     )
-    response = get_glm_client().chat.completions.create(
+    response = get_llm_client().chat.completions.create(
         model=MODEL_NAME,
         messages=[{"role": "user", "content": prompt}],
         temperature=0,

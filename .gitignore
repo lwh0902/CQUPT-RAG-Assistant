@@ -32,3 +32,17 @@ async.py
 test.py
 
 QQ20260605-172342.png
+
+# Local index / runtime data (rebuild on deploy)
+parent_chunks.json
+backups/
+.playwright-cli/
+
+# Evaluation harness, gold, run dumps (keep out of product repo)
+evaluation/
+docs/evaluation/
+scripts/preview_article_chunks.py
+evaluate.py
+experiment.py
+experiment_report.json
+tests/evaluation/

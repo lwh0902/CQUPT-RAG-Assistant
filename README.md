@@ -6,9 +6,9 @@
 
 | 层级 | 技术 |
 |------|------|
-| LLM | GLM-4.7-Flash (智谱 AI) |
+| LLM | DeepSeek-V4-Flash |
 | 后端 | Python / FastAPI / LangChain |
-| 向量库 | ChromaDB + ZhipuAI Embedding |
+| 向量库 | ChromaDB + 智谱 embedding-2 |
 | 混合检索 | rank_bm25 + jieba (BM25) / RRF 融合 |
 | 数据库 | MySQL (SQLAlchemy ORM) |
 | 认证 | JWT (bcrypt + HS256) |
@@ -84,7 +84,7 @@ cd frontend && npm install
 
 ```bash
 cp .env.example .env
-# 编辑 .env 填入 ZHIPU_API_KEY 和 MySQL 连接信息
+# 编辑 .env 填入 DEEPSEEK_API_KEY、ZHIPU_API_KEY（仅 embedding）和 MySQL 连接信息
 ```
 
 ### 3. 初始化数据库
@@ -125,7 +125,7 @@ cd frontend && npm run dev
 │   ├── sessions.py         # 会话 CRUD + 全文搜索 + 重命名
 │   └── documents.py        # PDF 原页 / 缩略图按需渲染 (PyMuPDF)
 ├── services/
-│   ├── llm.py              # ZhipuAI 客户端，流式输出
+│   ├── llm.py              # DeepSeek 客户端，流式输出
 │   ├── rewriter.py         # LLM 查询改写 (1 → 2-4 子查询)
 │   └── hybrid.py           # BM25 索引 + RRF 融合检索
 ├── data/

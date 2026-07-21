@@ -68,19 +68,32 @@ POLICY_DOCUMENTS = [
 # Vector store and index metadata locations.
 VECTOR_DB_DIR = Path("chroma_db")
 INDEX_META_PATH = Path("manual_index_meta.json")
-SPLITTER_VERSION = "article_chunk_v2"
+SPLITTER_VERSION = "parent_child_article_v1"
 
 # Model and retrieval settings.
 MODEL_NAME = os.getenv("LLM_MODEL", "deepseek-v4-flash")
-EMBEDDING_MODEL_NAME = "shibing624/text2vec-base-chinese"
-CANDIDATE_TOP_K = 8
-RETRIEVAL_TOP_K = 3
+# Embedding still uses Zhipu; chat/rewrite/summary use DeepSeek above.
+EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL", "embedding-2")
+# Wider candidate pool for hybrid fusion; final answer still uses RETRIEVAL_TOP_K.
+CANDIDATE_TOP_K = int(os.getenv("CANDIDATE_TOP_K", "16"))
+HYBRID_FUSION_TOP_K = int(os.getenv("HYBRID_FUSION_TOP_K", "12"))
+RETRIEVAL_TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "3"))
 SCORE_THRESHOLD = 0.3
 # Evidence-gate defaults. They must be calibrated against a human-reviewed
 # retrieval set before changing production behavior.
 RETRIEVAL_VECTOR_SUPPORTED_THRESHOLD = float(os.getenv("RETRIEVAL_VECTOR_SUPPORTED_THRESHOLD", "0.52"))
 RETRIEVAL_VECTOR_OUT_OF_SCOPE_THRESHOLD = float(os.getenv("RETRIEVAL_VECTOR_OUT_OF_SCOPE_THRESHOLD", "0.30"))
 RETRIEVAL_KEYWORD_COVERAGE_THRESHOLD = float(os.getenv("RETRIEVAL_KEYWORD_COVERAGE_THRESHOLD", "0.50"))
+# Strong lexical hit can support even when vector is only mid-range (common for
+# short colloquial campus questions whose wording differs from statute text).
+RETRIEVAL_BM25_SUPPORTED_THRESHOLD = float(os.getenv("RETRIEVAL_BM25_SUPPORTED_THRESHOLD", "4.0"))
+# Knowledge-path rewrite gate. auto = retrieve first, rewrite only when weak.
+REWRITE_MODE = os.getenv("REWRITE_MODE", "auto")  # auto | on | off
+REWRITE_EXPANSION_WEIGHT = float(os.getenv("REWRITE_EXPANSION_WEIGHT", "0.5"))
+# After hybrid hits, pull same-document neighbor pages into the candidate pool
+# so cross-page clauses are less likely to be truncated in the final context.
+NEIGHBOR_PAGE_RADIUS = int(os.getenv("NEIGHBOR_PAGE_RADIUS", "1"))
+NEIGHBOR_SEED_TOP_N = int(os.getenv("NEIGHBOR_SEED_TOP_N", "5"))
 
 # PDF chunking settings.
 CHUNK_SIZE = 500

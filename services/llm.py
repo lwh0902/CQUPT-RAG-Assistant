@@ -15,10 +15,12 @@ from tools import AGENT_TOOLS_SCHEMA
 _client: Optional[OpenAI] = None
 
 
-def get_glm_client() -> OpenAI:
+def get_llm_client() -> OpenAI:
+    """Return a singleton OpenAI-compatible DeepSeek client."""
     global _client
     if _client is None:
         import os
+
         api_key = os.getenv("DEEPSEEK_API_KEY")
         if not api_key:
             raise ValueError("未找到 DEEPSEEK_API_KEY，请检查 .env 配置。")
@@ -29,7 +31,7 @@ def get_glm_client() -> OpenAI:
     return _client
 
 
-def create_glm_completion(
+def create_llm_completion(
     messages: list[dict[str, Any]],
     *,
     with_tools: bool,
@@ -50,10 +52,10 @@ def create_glm_completion(
         request_payload["temperature"] = temperature
     if top_p is not None:
         request_payload["top_p"] = top_p
-    return get_glm_client().chat.completions.create(**request_payload)
+    return get_llm_client().chat.completions.create(**request_payload)
 
 
-async def stream_glm_text(
+async def stream_llm_text(
     messages: list[dict[str, Any]],
     *,
     temperature: Optional[float] = None,
@@ -67,7 +69,7 @@ async def stream_glm_text(
 
     def worker() -> None:
         try:
-            stream_response = create_glm_completion(
+            stream_response = create_llm_completion(
                 messages,
                 with_tools=False,
                 stream=True,

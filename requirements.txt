@@ -13,10 +13,11 @@ langchain-text-splitters
 chromadb
 jieba
 rank-bm25
+bcrypt
+python-jose
 python-dotenv
 zhipuai
 openai
-websocket-client
 pytest
 pytest-asyncio
 httpx

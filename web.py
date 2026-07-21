@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from urllib.parse import urlparse, urlunparse
 
 from dotenv import load_dotenv
 import requests
@@ -25,21 +24,12 @@ def normalize_base_url(url: str) -> str:
     return (url or DEFAULT_API_BASE_URL).rstrip("/")
 
 
-def derive_websocket_base(api_base_url: str) -> str:
-    parsed = urlparse(api_base_url)
-    scheme = "wss" if parsed.scheme == "https" else "ws"
-    return urlunparse((scheme, parsed.netloc, "", "", "", "")).rstrip("/")
-
-
 API_BASE_URL = normalize_base_url(
     os.getenv("API_BASE_URL", DEFAULT_API_BASE_URL)
 )
-WS_BASE_URL = normalize_base_url(
-    os.getenv("WS_BASE_URL", derive_websocket_base(API_BASE_URL))
-)
 CHAT_API_URL = f"{API_BASE_URL}/chat"
+CHAT_STREAM_URL = f"{API_BASE_URL}/chat/stream"
 SESSIONS_API_URL = f"{API_BASE_URL}/sessions"
-WS_CHAT_URL = f"{WS_BASE_URL}/ws/chat"
 
 
 st.set_page_config(
@@ -209,43 +199,51 @@ def start_new_chat() -> None:
     st.session_state.messages = default_messages()
 
 
-def stream_reply_via_websocket(prompt: str, response_placeholder) -> str:
-    import websocket
+def stream_reply_via_sse(prompt: str, response_placeholder) -> str:
+    headers = {"Accept": "text/event-stream", "Content-Type": "application/json"}
+    token = st.session_state.get("access_token") or os.getenv("STREAMLIT_ACCESS_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
 
-    ws = None
     reply = ""
-
-    try:
-        ws = websocket.create_connection(WS_CHAT_URL, timeout=API_TIMEOUT)
-        ws.send(
-            json.dumps(
-                {
-                    "user_id": st.session_state.user_id,
-                    "session_id": st.session_state.session_id,
-                    "new_message": prompt,
-                },
-                ensure_ascii=False,
-            )
-        )
-
-        while True:
-            raw_message = ws.recv()
-            event = json.loads(raw_message)
-            event_type = event.get("type")
-
-            if event_type == "delta":
-                reply += event.get("content", "")
-                response_placeholder.markdown(reply)
+    with requests.post(
+        CHAT_STREAM_URL,
+        headers=headers,
+        json={
+            "session_id": st.session_state.session_id,
+            "new_message": prompt,
+        },
+        stream=True,
+        timeout=API_TIMEOUT,
+    ) as response:
+        response.raise_for_status()
+        event_lines: list[str] = []
+        for raw_line in response.iter_lines(decode_unicode=True):
+            if raw_line is None:
                 continue
-
-            if event_type == "error":
-                raise RuntimeError(event.get("message", "WebSocket 调用失败"))
-
-            if event_type == "end":
-                break
-    finally:
-        if ws is not None:
-            ws.close()
+            line = raw_line.strip("\r")
+            if not line:
+                if not event_lines:
+                    continue
+                data_lines = [
+                    item[5:].lstrip()
+                    for item in event_lines
+                    if item.startswith("data:")
+                ]
+                event_lines = []
+                if not data_lines:
+                    continue
+                event = json.loads("\n".join(data_lines))
+                event_type = event.get("type")
+                if event_type == "delta":
+                    reply += event.get("content", "")
+                    response_placeholder.markdown(reply)
+                elif event_type == "error":
+                    raise RuntimeError(event.get("message", "SSE 调用失败"))
+                elif event_type == "end":
+                    break
+                continue
+            event_lines.append(line)
 
     return reply
 
@@ -339,14 +337,14 @@ if prompt:
     with st.chat_message("assistant"):
         reply = ""
         response_placeholder = st.empty()
-        used_websocket = False
+        used_stream = False
 
         try:
-            reply = stream_reply_via_websocket(prompt, response_placeholder)
-            used_websocket = True
-        except Exception as ws_exc:
-            if used_websocket or reply:
-                st.error(str(ws_exc))
+            reply = stream_reply_via_sse(prompt, response_placeholder)
+            used_stream = True
+        except Exception as stream_exc:
+            if used_stream or reply:
+                st.error(str(stream_exc))
             else:
                 response = None
                 try:
@@ -354,7 +352,6 @@ if prompt:
                         response = requests.post(
                             CHAT_API_URL,
                             json={
-                                "user_id": st.session_state.user_id,
                                 "session_id": st.session_state.session_id,
                                 "new_message": prompt,
                             },

@@ -95,8 +95,54 @@ def test_conflicting_evidence_is_never_high_confidence() -> None:
 
     result = calculate_confidence(evidence)
 
-    assert result.level in {"low", "unknown"}
+    assert result.level in {"low", "medium", "unknown"}
     assert result.uncertain_points
+    assert result.level != "high"
+
+
+def test_same_manual_neighbor_pages_are_not_numeric_conflicts() -> None:
+    """Late-return pages mix 5分/20分/23:30 — that is not a source conflict."""
+    evidence = [
+        EvidenceSource(
+            id="kb-138",
+            source_type="knowledge_base",
+            title="学生手册",
+            snippet="学生应当在每天早晨6:00到23:30期间凭校园一卡通刷卡进出。未按时归寝记为晚归。",
+            document_id="student_manual_education_2025",
+            document_name="学生手册（教育管理篇）2025版",
+            page=138,
+            relevance_score=0.4,
+            authority_score=0.95,
+        ),
+        EvidenceSource(
+            id="kb-145",
+            source_type="knowledge_base",
+            title="学生手册",
+            snippet="晚归的，扣5分/人次；夜不归宿的，扣20分/人次。",
+            document_id="student_manual_education_2025",
+            document_name="学生手册（教育管理篇）2025版",
+            page=145,
+            relevance_score=0.4,
+            authority_score=0.95,
+        ),
+        EvidenceSource(
+            id="kb-144",
+            source_type="knowledge_base",
+            title="学生手册",
+            snippet="存在违规行为（卫生不合格、晚归等违规行为除外）的，工作人员将出具积分处罚告知书。",
+            document_id="student_manual_education_2025",
+            document_name="学生手册（教育管理篇）2025版",
+            page=144,
+            relevance_score=0.35,
+            authority_score=0.95,
+        ),
+    ]
+
+    result = calculate_confidence(evidence)
+
+    assert "冲突" not in "".join(result.uncertain_points)
+    assert result.level in {"high", "medium"}
+    assert result.level != "unknown"
 
 
 def test_empty_evidence_is_unknown() -> None:

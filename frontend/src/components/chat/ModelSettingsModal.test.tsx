@@ -15,6 +15,8 @@ test('loads and saves account model settings from slider controls', async () => 
   fireEvent.click(screen.getByRole('button', { name: '模型设置' }))
 
   await screen.findByLabelText('温度')
+  expect(screen.getByText(/控制回答稳不稳/)).toBeTruthy()
+  expect(screen.getByText(/控制用词宽不宽/)).toBeTruthy()
   fireEvent.change(screen.getByLabelText('温度'), { target: { value: '0.6' } })
   fireEvent.pointerUp(screen.getByLabelText('温度'))
 

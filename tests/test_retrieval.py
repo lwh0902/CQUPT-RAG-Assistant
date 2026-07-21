@@ -1,7 +1,12 @@
 import pytest
 
 from services.evidence import EvidenceSource
-from services.retrieval import collect_evidence, decide_local_evidence
+from services.retrieval import (
+    collect_evidence,
+    decide_from_docs,
+    decide_local_evidence,
+    is_personal_data_query,
+)
 
 
 class FakeToolRegistry:
@@ -14,13 +19,42 @@ class FakeToolRegistry:
         return self.web_results
 
 
-def test_decide_local_evidence_rejects_low_vector_and_absent_bm25_scores() -> None:
+def test_decide_local_evidence_rejects_low_vector_without_lexical_support() -> None:
     assert decide_local_evidence(
         has_local_source=True,
         vector_score=0.12,
-        bm25_score=5.71,
+        bm25_score=1.0,
         keyword_coverage=0.0,
     ) == "out_of_scope"
+
+
+def test_decide_local_evidence_supports_mid_vector_with_keyword_overlap() -> None:
+    assert decide_local_evidence(
+        has_local_source=True,
+        vector_score=0.37,
+        bm25_score=6.5,
+        keyword_coverage=0.5,
+    ) == "supported"
+
+
+def test_decide_local_evidence_supports_strong_bm25_with_mid_vector() -> None:
+    assert decide_local_evidence(
+        has_local_source=True,
+        vector_score=0.37,
+        bm25_score=6.5,
+        keyword_coverage=0.0,
+    ) == "supported"
+
+
+def test_is_personal_data_query_detects_private_record_asks() -> None:
+    assert is_personal_data_query("我的个人综测成绩是多少？") is True
+    assert is_personal_data_query("查一下我的绩点") is True
+    assert is_personal_data_query("综测成绩怎么算？") is False
+
+
+def test_decide_from_docs_rejects_personal_data_even_if_docs_exist() -> None:
+    fake_docs = [object()]
+    assert decide_from_docs("我的个人综测成绩是多少？", retriever=object(), docs=fake_docs) == "out_of_scope"
 
 
 @pytest.mark.asyncio
@@ -74,11 +108,33 @@ async def test_collect_evidence_marks_missing_local_knowledge_as_out_of_scope(mo
 
 
 @pytest.mark.asyncio
+async def test_collect_evidence_skips_local_kb_for_personal_data_query(monkeypatch) -> None:
+    called = {"rag": 0}
+
+    async def fake_rag_context(query, retriever):
+        called["rag"] += 1
+        return "【综测办法｜第 3 页】\n综测成绩计算公式..."
+
+    monkeypatch.setattr("services.retrieval.get_rag_context_async", fake_rag_context)
+    result = await collect_evidence(
+        "我的个人综测成绩是多少？",
+        retriever=object(),
+        tools=FakeToolRegistry([]),
+        web_search_enabled=False,
+    )
+    assert called["rag"] == 0
+    assert result.decision == "out_of_scope"
+    assert result.sources == []
+    assert result.knowledge_context == ""
+
+
+@pytest.mark.asyncio
 async def test_collect_evidence_hides_weak_local_sources_for_an_out_of_scope_query(monkeypatch) -> None:
     async def fake_rag_context(query, retriever):
         return "【学生手册｜第 12 页】\n国家奖学金奖励标准为 10000 元。"
 
     async def fake_probe(query, retriever, context):
+        # Very weak vector + no overlap => out_of_scope (BM25 alone cannot rescue).
         return context, 0.02, 5.71, 0.0
 
     monkeypatch.setattr("services.retrieval.get_rag_context_async", fake_rag_context)

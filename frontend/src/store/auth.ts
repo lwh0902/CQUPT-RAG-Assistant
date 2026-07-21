@@ -9,8 +9,20 @@ interface AuthState {
   checkPhone: (phone: string) => Promise<boolean>
   login: (phone: string, password: string) => Promise<void>
   register: (phone: string, password: string) => Promise<void>
-  logout: () => void
+  logout: () => Promise<void>
   restoreSession: () => void
+}
+
+function persistAuth(token: string, userId: string, phone: string) {
+  localStorage.setItem('token', token)
+  localStorage.setItem('user_id', userId)
+  localStorage.setItem('phone', phone)
+}
+
+function clearPersistedAuth() {
+  localStorage.removeItem('token')
+  localStorage.removeItem('user_id')
+  localStorage.removeItem('phone')
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -34,33 +46,42 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   login: async (phone: string, password: string) => {
-    const res = await api.post<{ token: string; user_id: string }>('/auth/login', {
+    const res = await api.post<{
+      token: string
+      access_token?: string
+      user_id: string
+    }>('/auth/login', {
       phone,
       password,
     })
-    const { token, user_id } = res.data
-    localStorage.setItem('token', token)
-    localStorage.setItem('user_id', user_id)
-    localStorage.setItem('phone', phone)
+    const token = res.data.access_token || res.data.token
+    const { user_id } = res.data
+    persistAuth(token, user_id, phone)
     set({ token, userId: user_id, phone, isAuthenticated: true })
   },
 
   register: async (phone: string, password: string) => {
-    const res = await api.post<{ token: string; user_id: string }>('/auth/register', {
+    const res = await api.post<{
+      token: string
+      access_token?: string
+      user_id: string
+    }>('/auth/register', {
       phone,
       password,
     })
-    const { token, user_id } = res.data
-    localStorage.setItem('token', token)
-    localStorage.setItem('user_id', user_id)
-    localStorage.setItem('phone', phone)
+    const token = res.data.access_token || res.data.token
+    const { user_id } = res.data
+    persistAuth(token, user_id, phone)
     set({ token, userId: user_id, phone, isAuthenticated: true })
   },
 
-  logout: () => {
-    localStorage.removeItem('token')
-    localStorage.removeItem('user_id')
-    localStorage.removeItem('phone')
+  logout: async () => {
+    try {
+      await api.post('/auth/logout')
+    } catch {
+      // Clear local state even if the network call fails.
+    }
+    clearPersistedAuth()
     set({ token: null, userId: null, phone: null, isAuthenticated: false })
   },
 }))

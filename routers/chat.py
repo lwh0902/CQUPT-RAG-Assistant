@@ -1,4 +1,4 @@
-"""Chat routes: REST endpoint and WebSocket streaming."""
+"""Chat routes: REST endpoint and SSE streaming."""
 
 from __future__ import annotations
 
@@ -8,20 +8,26 @@ import logging
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Callable, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import asc, desc, select
 from sqlalchemy.orm import Session
 
 from database import engine
 from models import ChatSession, Message, User, UserModelSettings
-from rag import get_rag_context_async
 from settings import MODEL_NAME
-from security import SECRET_KEY, ALGORITHM, get_current_user
+from security import get_current_user
 from services.confidence import calculate_confidence
-from services.llm import create_glm_completion, get_glm_client, stream_glm_text
+from services.conversation_context import (
+    format_turns_for_prompt,
+    previous_user_utterance,
+    resolve_followup_query,
+    turns_to_chat_messages,
+)
+from services.llm import create_llm_completion, get_llm_client, stream_llm_text
 from services.memory_manager import MemoryManager
 from services.retrieval import collect_evidence, format_web_evidence_for_prompt
 from services.log_context import bind_log_context, reset_log_context
@@ -87,16 +93,13 @@ def _build_session_title(message: str) -> str:
 
 
 def ensure_session_exists(request: ChatRequest) -> None:
+    if not request.user_id:
+        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+
     with Session(engine) as db:
         current_user = db.scalar(select(User).where(User.id == request.user_id))
-
         if current_user is None:
-            current_user = User(
-                id=request.user_id,
-                username=f"user_{request.user_id}",
-            )
-            db.add(current_user)
-            db.flush()
+            raise HTTPException(status_code=401, detail="未登录或登录已过期")
 
         chat_window = db.scalar(
             select(ChatSession).where(ChatSession.id == request.session_id)
@@ -175,6 +178,10 @@ def build_system_prompt(hybrid_context: dict[str, Any]) -> str:
     web = hybrid_context.get("web") or "无"
     long_term = hybrid_context.get("long_term") or "无"
     short_term = hybrid_context.get("short_term") or "无"
+    resolved_query = hybrid_context.get("resolved_query") or ""
+    resolved_block = (
+        f"【当前问题（含追问消解）】\n{resolved_query}\n\n" if resolved_query else ""
+    )
 
     return (
         '你是“重邮极客 Agent”，是一个校园综合助手。\n'
@@ -184,13 +191,16 @@ def build_system_prompt(hybrid_context: dict[str, Any]) -> str:
         "3. 在需要时调用工具查询课表。\n"
         '当用户打招呼、寒暄，或者询问“你能做什么”时，'
         "请明确告诉用户你既可以查天气和课表，也可以检索并解答学生手册相关内容。\n"
+        "请结合对话历史理解追问、指代和省略（例如“那不回呢”应承接上一问的主题）。\n"
         "请严格基于以下参考资料回答问题；如果问题需要实时天气或课表信息，就结合工具结果回答。\n"
         "网络资料只能引用其中真实提供的链接，不得把自身常识伪装成联网检索结果。"
-        "资料不足或来源冲突时，必须明确说明不确定性。\n\n"
+        "资料不足或来源冲突时，必须明确说明不确定性。\n"
+        "不要主动推荐课表或天气，除非用户明确在问这些。\n\n"
+        f"{resolved_block}"
         f"【学生手册知识】\n{knowledge}\n\n"
         f"【联网检索资料】\n{web}\n\n"
         f"【长期记忆】\n{long_term}\n\n"
-        f"【短期记忆】\n{short_term}"
+        f"【近期对话摘要】\n{short_term}"
     )
 
 
@@ -198,8 +208,15 @@ def build_final_messages(
     request: ChatRequest,
     hybrid_context: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    history = turns_to_chat_messages(
+        hybrid_context.get("recent_turns") or [],
+        exclude_last_user=True,
+    )
+    # Keep prompt bounded: last few turns only.
+    history = history[-SHORT_TERM_MESSAGE_LIMIT:]
     return [
         {"role": "system", "content": build_system_prompt(hybrid_context)},
+        *history,
         {"role": "user", "content": request.new_message},
     ]
 
@@ -237,24 +254,36 @@ def _quick_intent_check(query: str) -> Optional[str]:
     return None
 
 
-async def classify_intent(query: str) -> str:
+async def classify_intent(query: str, *, previous_user: str | None = None) -> str:
     """Classify user intent as 'chat' (casual) or 'knowledge' (needs RAG).
 
     Uses a fast keyword pre-check first, falls back to a lightweight LLM call.
+    Follow-up fragments are classified with the previous user turn in mind.
     """
-    quick = _quick_intent_check(query)
+    from services.conversation_context import is_followup_utterance, resolve_followup_query
+
+    effective = resolve_followup_query(query, previous_user) if previous_user else query
+    # Short deictic follow-ups after a knowledge question stay on the knowledge path.
+    if previous_user and is_followup_utterance(query, previous_user):
+        prev_intent_hint = _quick_intent_check(previous_user)
+        if prev_intent_hint != "chat":
+            return "knowledge"
+
+    quick = _quick_intent_check(effective)
     if quick is not None:
         return quick
 
     prompt = (
         "判断以下用户消息的意图。只回答一个词：\n"
         "- 如果是打招呼、寒暄、闲聊、问你是谁、问你能做什么、表达感谢等日常对话 → 回答 chat\n"
-        "- 如果是关于学生手册、校规、学籍、奖学金、处分、考试、请假、课表、天气等具体问题 → 回答 knowledge\n\n"
-        f"用户消息：{query}\n\n意图："
+        "- 如果是关于学生手册、校规、学籍、奖学金、处分、考试、请假、课表、天气等具体问题 → 回答 knowledge\n"
+        "- 如果是对上一问的追问/省略（如“那不回呢”“如果更严重呢”）且上一问是制度问题 → 回答 knowledge\n\n"
+        + (f"上一轮用户问题：{previous_user}\n" if previous_user else "")
+        + f"用户消息：{query}\n\n意图："
     )
 
     def _call() -> str:
-        client = get_glm_client()
+        client = get_llm_client()
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[{"role": "user", "content": prompt}],
@@ -277,10 +306,36 @@ CHAT_SYSTEM_PROMPT = (
 )
 
 
-def build_chat_messages(query: str) -> list[dict[str, Any]]:
+def load_recent_turns(session_id: str, *, limit: int = SHORT_TERM_MESSAGE_LIMIT) -> list[dict[str, str]]:
+    """Load recent chat turns oldest→newest for multi-turn grounding."""
+    with Session(engine) as db:
+        stmt = (
+            select(Message)
+            .where(Message.session_id == session_id)
+            .order_by(desc(Message.id))
+            .limit(limit)
+        )
+        rows = list(reversed(db.scalars(stmt).all()))
+    turns: list[dict[str, str]] = []
+    for row in rows:
+        role = getattr(row, "role", None)
+        content = (getattr(row, "content", None) or "").strip()
+        if role in {"user", "assistant"} and content:
+            turns.append({"role": role, "content": content})
+    return turns
+
+
+def build_chat_messages(
+    query: str,
+    *,
+    recent_turns: list[dict[str, str]] | None = None,
+) -> list[dict[str, Any]]:
     """Build messages for casual chat (no RAG context needed)."""
+    history = turns_to_chat_messages(recent_turns or [], exclude_last_user=True)
+    history = history[-SHORT_TERM_MESSAGE_LIMIT:]
     return [
         {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+        *history,
         {"role": "user", "content": query},
     ]
 
@@ -388,7 +443,7 @@ def summarize_window(messages: list[Message]) -> str:
         "如果没有值得长期保留的信息，只输出 NO_MEMORY。\n\n"
         f"{transcript}"
     )
-    response = get_glm_client().chat.completions.create(
+    response = get_llm_client().chat.completions.create(
         model=MODEL_NAME,
         messages=[{"role": "user", "content": prompt}],
         extra_body={"thinking": {"type": "disabled"}},
@@ -469,20 +524,10 @@ async def assemble_context_and_memory(
     tool_registry=None,
     web_search_enabled: bool = False,
 ) -> dict[str, Any]:
-    def get_short_term() -> str:
-        with Session(engine) as db:
-            stmt = (
-                select(Message)
-                .where(Message.session_id == session_id)
-                .order_by(desc(Message.id))
-                .limit(SHORT_TERM_MESSAGE_LIMIT)
-            )
-            messages = list(reversed(db.scalars(stmt).all()))
-
-        if not messages:
-            return ""
-
-        return "\n".join(f"[{message.role}]: {message.content}" for message in messages)
+    recent_turns = await asyncio.to_thread(load_recent_turns, session_id)
+    prev_user = previous_user_utterance(recent_turns, current_query)
+    resolved_query = resolve_followup_query(current_query, prev_user)
+    short_term = format_turns_for_prompt(recent_turns, limit=SHORT_TERM_MESSAGE_LIMIT)
 
     def get_long_term() -> str:
         with Session(engine) as db:
@@ -491,8 +536,9 @@ async def assemble_context_and_memory(
         if long_term_memory_store is None:
             return structured_memory
 
+        # Retrieve long-term memory with the resolved multi-turn query.
         docs = long_term_memory_store.similarity_search(
-            query=current_query,
+            query=resolved_query or current_query,
             k=4,
             filter={
                 "$and": [
@@ -510,14 +556,13 @@ async def assemble_context_and_memory(
 
     async def get_retrieval():
         return await collect_evidence(
-            current_query,
+            resolved_query or current_query,
             retriever=retriever,
             tools=tool_registry,
             web_search_enabled=web_search_enabled,
         )
 
-    short_term, long_term, retrieval = await asyncio.gather(
-        asyncio.to_thread(get_short_term),
+    long_term, retrieval = await asyncio.gather(
         asyncio.to_thread(get_long_term),
         get_retrieval(),
     )
@@ -529,6 +574,9 @@ async def assemble_context_and_memory(
         "web": format_web_evidence_for_prompt(retrieval.web_sources),
         "sources": retrieval.sources,
         "retrieval_decision": retrieval.decision,
+        "recent_turns": recent_turns,
+        "resolved_query": resolved_query,
+        "previous_user": prev_user,
     }
 
 
@@ -593,7 +641,7 @@ async def resolve_tool_messages(first_message: Any) -> tuple[list[dict[str, Any]
 
 async def run_agent_loop(messages: list[dict[str, Any]]) -> str:
     first_response = await asyncio.to_thread(
-        create_glm_completion,
+        create_llm_completion,
         messages,
         with_tools=True,
         stream=False,
@@ -610,7 +658,7 @@ async def run_agent_loop(messages: list[dict[str, Any]]) -> str:
     resolved_tool_calls, tool_messages = await resolve_tool_messages(first_message)
     if not resolved_tool_calls:
         fallback_response = await asyncio.to_thread(
-            create_glm_completion,
+            create_llm_completion,
             messages,
             with_tools=False,
             stream=False,
@@ -626,7 +674,7 @@ async def run_agent_loop(messages: list[dict[str, Any]]) -> str:
     ] + tool_messages
 
     final_response = await asyncio.to_thread(
-        create_glm_completion,
+        create_llm_completion,
         followup_messages,
         with_tools=False,
         stream=False,
@@ -634,50 +682,27 @@ async def run_agent_loop(messages: list[dict[str, Any]]) -> str:
     return final_response.choices[0].message.content or ""
 
 
-async def run_agent_loop_stream(
+def _sse_pack(payload: dict[str, Any]) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+async def _stream_text_events(
     messages: list[dict[str, Any]],
-    websocket: WebSocket,
+    *,
+    generation_options: dict[str, float],
+    emit: Callable[[dict[str, Any]], None],
 ) -> str:
-    first_response = await asyncio.to_thread(
-        create_glm_completion,
-        messages,
-        with_tools=True,
-        stream=False,
-    )
-    first_choice = first_response.choices[0]
-    first_message = first_choice.message
-
-    target_messages = messages
-    if (
-        first_choice.finish_reason == "tool_calls"
-        and first_message.tool_calls
-    ):
-        resolved_tool_calls, tool_messages = await resolve_tool_messages(first_message)
-        if resolved_tool_calls:
-            target_messages = messages + [
-                {
-                    "role": first_message.role,
-                    "content": first_message.content or "",
-                    "tool_calls": resolved_tool_calls,
-                }
-            ] + tool_messages
-
     reply_parts: list[str] = []
     first_token = True
-    async for token in stream_glm_text(target_messages):
+    async for token in stream_llm_text(messages, **generation_options):
         if first_token:
-            await websocket.send_json({"type": "start"})
+            emit({"type": "start"})
             first_token = False
         reply_parts.append(token)
-        await websocket.send_json(
-            {
-                "type": "delta",
-                "content": token,
-            }
-        )
+        emit({"type": "delta", "content": token})
 
     if not reply_parts:
-        await websocket.send_json({"type": "start"})
+        emit({"type": "start"})
 
     return "".join(reply_parts)
 
@@ -691,6 +716,7 @@ def build_retrieval_refusal(retrieval_decision: str) -> str:
         return "当前知识库检索到了相关片段，但证据不足以支持可靠回答。建议开启联网搜索后重试；网络结果仅供参考，请以学校官网和正式文件为准。"
     return "当前知识库未收录可核验的相关依据。建议开启联网搜索后重试；网络结果仅供参考，请以学校官网和正式文件为准。"
 
+
 @router.post("/chat")
 async def chat(
     request_body: ChatRequest,
@@ -702,7 +728,6 @@ async def chat(
     bind_log_context(user_id=current_user.id, session_id=request_body.session_id)
     app_state = request.app.state
     await asyncio.to_thread(ensure_session_exists, request_body)
-    generation_options = await asyncio.to_thread(get_generation_options, request_body.user_id)
     hybrid_context = await assemble_context_and_memory(
         user_id=request_body.user_id,
         session_id=request_body.session_id,
@@ -743,220 +768,222 @@ async def chat(
     }
 
 
-@router.websocket("/ws/chat")
-async def websocket_chat(websocket: WebSocket) -> None:
-    token = websocket.query_params.get("token")
-    if not token:
-        await websocket.close(code=4001, reason="Missing auth token")
-        return
-
-    try:
-        from jose import jwt as jose_jwt
-        payload_data = jose_jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id_from_token: Optional[str] = payload_data.get("sub")
-        if not user_id_from_token:
-            await websocket.close(code=4001, reason="Invalid token")
-            return
-    except Exception:
-        await websocket.close(code=4001, reason="Invalid or expired token")
-        return
-
-    with Session(engine) as db:
-        user = db.scalar(select(User).where(User.id == user_id_from_token))
-        if user is None:
-            await websocket.close(code=4001, reason="User not found")
-            return
-
-    await websocket.accept()
-
-    try:
-        payload = await websocket.receive_json()
-        request = ChatRequest.model_validate(payload)
-        request.user_id = user_id_from_token
-    except ValidationError as exc:
-        details = [
-            {
-                "loc": " -> ".join(str(item) for item in error.get("loc", [])),
-                "msg": error.get("msg", ""),
-            }
-            for error in exc.errors()
-        ]
-        await websocket.send_json(
-            {
-                "type": "error",
-                "message": "参数校验失败，请检查输入规范。",
-                "details": details,
-            }
-        )
-        await websocket.close(code=1008)
-        return
-    except Exception as exc:
-        await websocket.send_json(
-            {
-                "type": "error",
-                "message": f"WebSocket 初始化失败：{exc}",
-            }
-        )
-        await websocket.close(code=1003)
-        return
-
-    app_state = websocket.app.state
-    retriever = getattr(app_state, "retriever", None)
-    long_term_memory_store = getattr(app_state, "long_term_memory_store", None)
-    tool_registry = getattr(app_state, "tool_registry", None)
-
+@router.post("/chat/stream")
+async def chat_stream(
+    request_body: ChatRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """Stream chat events over SSE using the same Authorization / cookie auth as REST."""
+    request_body.user_id = current_user.id
+    request.state.session_id = request_body.session_id
     context_tokens = bind_log_context(
-        request_id=uuid.uuid4().hex,
-        user_id=request.user_id,
-        session_id=request.session_id,
+        request_id=getattr(request.state, "request_id", uuid.uuid4().hex),
+        user_id=current_user.id,
+        session_id=request_body.session_id,
     )
-    try:
-        await asyncio.to_thread(ensure_session_exists, request)
-        generation_options = await asyncio.to_thread(get_generation_options, request.user_id)
+    app_state = request.app.state
 
-        await websocket.send_json({
-            "type": "thinking",
-            "step": "analyzing",
-            "message": "正在分析你的问题",
-        })
+    async def event_generator() -> AsyncIterator[str]:
+        queue: asyncio.Queue[Optional[dict[str, Any]]] = asyncio.Queue()
 
-        intent = await classify_intent(request.new_message)
+        def emit(payload: dict[str, Any]) -> None:
+            queue.put_nowait(payload)
 
-        if intent == "chat":
-            await websocket.send_json({
-                "type": "thinking",
-                "step": "generating",
-                "message": "正在生成回答",
-            })
+        async def run_pipeline() -> None:
+            try:
+                await asyncio.to_thread(ensure_session_exists, request_body)
+                generation_options = await asyncio.to_thread(
+                    get_generation_options,
+                    request_body.user_id,
+                )
 
-            chat_messages = build_chat_messages(request.new_message)
-
-            reply_parts: list[str] = []
-            first_token = True
-            async for token in stream_glm_text(chat_messages, **generation_options):
-                if first_token:
-                    await websocket.send_json({"type": "start"})
-                    first_token = False
-                reply_parts.append(token)
-                await websocket.send_json({"type": "delta", "content": token})
-
-            if not reply_parts:
-                await websocket.send_json({"type": "start"})
-
-            ai_reply = "".join(reply_parts)
-            user_message_id = await asyncio.to_thread(save_messages, request, ai_reply)
-            await asyncio.to_thread(
-                persist_explicit_memories,
-                request.user_id,
-                request.session_id,
-                request.new_message,
-                user_message_id,
-            )
-            await websocket.send_json({"type": "end", "sources": []})
-        else:
-            await websocket.send_json({
-                "type": "thinking",
-                "step": "knowledge_retrieval",
-                "message": "正在检索校内知识库",
-            })
-            if request.web_search_enabled:
-                await websocket.send_json({
+                emit({
                     "type": "thinking",
-                    "step": "web_search",
-                    "message": "正在通过联网搜索工具查询互联网",
+                    "step": "analyzing",
+                    "message": "正在分析你的问题",
                 })
 
-            hybrid_context = await assemble_context_and_memory(
-                user_id=request.user_id,
-                session_id=request.session_id,
-                current_query=request.new_message,
-                retriever=retriever,
-                long_term_memory_store=long_term_memory_store,
-                tool_registry=tool_registry,
-                web_search_enabled=request.web_search_enabled,
-            )
+                recent_turns = await asyncio.to_thread(
+                    load_recent_turns,
+                    request_body.session_id,
+                )
+                previous_user = previous_user_utterance(
+                    recent_turns,
+                    request_body.new_message,
+                )
+                intent = await classify_intent(
+                    request_body.new_message,
+                    previous_user=previous_user,
+                )
 
-            if hybrid_context["retrieval_decision"] in {"out_of_scope", "insufficient"}:
-                ai_reply = build_retrieval_refusal(hybrid_context["retrieval_decision"])
-                await websocket.send_json({"type": "start"})
-                await websocket.send_json({"type": "delta", "content": ai_reply})
-                user_message_id = await asyncio.to_thread(save_messages, request, ai_reply)
-                await asyncio.to_thread(persist_explicit_memories, request.user_id, request.session_id, request.new_message, user_message_id)
-                await websocket.send_json({
-                    "type": "end",
-                    "sources": [],
-                    "retrieval_decision": hybrid_context["retrieval_decision"],
+                if intent == "chat":
+                    emit({
+                        "type": "thinking",
+                        "step": "generating",
+                        "message": "正在生成回答",
+                    })
+                    chat_messages = build_chat_messages(
+                        request_body.new_message,
+                        recent_turns=recent_turns,
+                    )
+                    ai_reply = await _stream_text_events(
+                        chat_messages,
+                        generation_options=generation_options,
+                        emit=emit,
+                    )
+                    user_message_id = await asyncio.to_thread(
+                        save_messages,
+                        request_body,
+                        ai_reply,
+                    )
+                    await asyncio.to_thread(
+                        persist_explicit_memories,
+                        request_body.user_id,
+                        request_body.session_id,
+                        request_body.new_message,
+                        user_message_id,
+                    )
+                    emit({"type": "end", "sources": []})
+                    return
+
+                emit({
+                    "type": "thinking",
+                    "step": "knowledge_retrieval",
+                    "message": "正在检索校内知识库",
                 })
-                return
+                if request_body.web_search_enabled:
+                    emit({
+                        "type": "thinking",
+                        "step": "web_search",
+                        "message": "正在通过联网搜索工具查询互联网",
+                    })
 
-            await websocket.send_json({
-                "type": "thinking",
-                "step": "evidence_fusion",
-                "message": "正在整理可核验的参考资料",
-                "detail": "已获取相关参考资料" if hybrid_context.get("sources") else "未检索到相关内容",
-            })
+                hybrid_context = await assemble_context_and_memory(
+                    user_id=request_body.user_id,
+                    session_id=request_body.session_id,
+                    current_query=request_body.new_message,
+                    retriever=getattr(app_state, "retriever", None),
+                    long_term_memory_store=getattr(app_state, "long_term_memory_store", None),
+                    tool_registry=getattr(app_state, "tool_registry", None),
+                    web_search_enabled=request_body.web_search_enabled,
+                )
 
-            await websocket.send_json({
-                "type": "thinking",
-                "step": "generating",
-                "message": "正在生成回答",
-            })
+                if hybrid_context["retrieval_decision"] in {"out_of_scope", "insufficient"}:
+                    ai_reply = build_retrieval_refusal(hybrid_context["retrieval_decision"])
+                    emit({"type": "start"})
+                    emit({"type": "delta", "content": ai_reply})
+                    user_message_id = await asyncio.to_thread(
+                        save_messages,
+                        request_body,
+                        ai_reply,
+                    )
+                    await asyncio.to_thread(
+                        persist_explicit_memories,
+                        request_body.user_id,
+                        request_body.session_id,
+                        request_body.new_message,
+                        user_message_id,
+                    )
+                    emit({
+                        "type": "end",
+                        "sources": [],
+                        "retrieval_decision": hybrid_context["retrieval_decision"],
+                    })
+                    return
 
-            final_messages = build_final_messages(request, hybrid_context)
+                emit({
+                    "type": "thinking",
+                    "step": "evidence_fusion",
+                    "message": "正在整理可核验的参考资料",
+                    "detail": (
+                        "已获取相关参考资料"
+                        if hybrid_context.get("sources")
+                        else "未检索到相关内容"
+                    ),
+                })
+                emit({
+                    "type": "thinking",
+                    "step": "generating",
+                    "message": "正在生成回答",
+                })
 
-            reply_parts: list[str] = []
-            first_token = True
-            async for token in stream_glm_text(final_messages, **generation_options):
-                if first_token:
-                    await websocket.send_json({"type": "start"})
-                    first_token = False
-                reply_parts.append(token)
-                await websocket.send_json({"type": "delta", "content": token})
+                final_messages = build_final_messages(request_body, hybrid_context)
+                ai_reply = await _stream_text_events(
+                    final_messages,
+                    generation_options=generation_options,
+                    emit=emit,
+                )
+                user_message_id = await asyncio.to_thread(
+                    save_messages,
+                    request_body,
+                    ai_reply,
+                )
+                await asyncio.to_thread(
+                    persist_explicit_memories,
+                    request_body.user_id,
+                    request_body.session_id,
+                    request_body.new_message,
+                    user_message_id,
+                )
+                await asyncio.to_thread(
+                    persist_long_term_summary,
+                    getattr(app_state, "long_term_memory_store", None),
+                    request_body,
+                )
 
-            if not reply_parts:
-                await websocket.send_json({"type": "start"})
-
-            ai_reply = "".join(reply_parts)
-            user_message_id = await asyncio.to_thread(save_messages, request, ai_reply)
-            await asyncio.to_thread(
-                persist_explicit_memories,
-                request.user_id,
-                request.session_id,
-                request.new_message,
-                user_message_id,
-            )
-            await asyncio.to_thread(persist_long_term_summary, long_term_memory_store, request)
-
-            confidence = calculate_confidence(hybrid_context.get("sources", []))
-            await websocket.send_json(
-                {
+                confidence = calculate_confidence(hybrid_context.get("sources", []))
+                emit({
                     "type": "end",
-                    "sources": [source.to_dict() for source in hybrid_context.get("sources", [])],
+                    "sources": [
+                        source.to_dict()
+                        for source in hybrid_context.get("sources", [])
+                    ],
                     "confidence": confidence.score,
                     "confidence_level": confidence.level,
                     "evidence_summary": confidence.evidence_summary,
                     "uncertain_points": confidence.uncertain_points,
                     "retrieval_decision": hybrid_context["retrieval_decision"],
-                }
-            )
-    except HTTPException as exc:
-        await websocket.send_json(
-            {
-                "type": "error",
-                "message": exc.detail,
-            }
-        )
-    except Exception as exc:
-        logging.exception("WebSocket chat failed")
-        await websocket.send_json(
-            {
-                "type": "error",
-                "message": f"Agent 处理失败：{exc}",
-            }
-        )
-    finally:
-        reset_log_context(context_tokens)
+                })
+            except HTTPException as exc:
+                detail = exc.detail
+                if not isinstance(detail, str):
+                    detail = "请求失败"
+                emit({"type": "error", "message": detail})
+            except Exception:
+                logging.exception("SSE chat failed")
+                emit({"type": "error", "message": "Agent 处理失败，请稍后重试。"})
+            finally:
+                queue.put_nowait(None)
+
+        worker = asyncio.create_task(run_pipeline())
         try:
-            await websocket.close()
-        except Exception:
-            pass
+            while True:
+                if await request.is_disconnected():
+                    worker.cancel()
+                    break
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+                if item is None:
+                    break
+                yield _sse_pack(item)
+        finally:
+            if not worker.done():
+                worker.cancel()
+                try:
+                    await worker
+                except asyncio.CancelledError:
+                    pass
+            reset_log_context(context_tokens)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
