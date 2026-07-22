@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "note": "高频事实直出卡。verified=false 的条目不会参与匹配；填入官方信息并核对后再置为 true。",
+  "facts": [
+    {
+      "id": "jwc_phone",
+      "title": "教务处联系电话",
+      "sample_question": "教务处电话多少",
+      "patterns": ["教务处.{0,6}(电话|联系方式|怎么联系|联系)", "(电话|联系方式|联系).{0,6}教务处"],
+      "answer": "综合科：023-62461386 / 023-62487848\n学籍成绩：023-62487853\n考务：023-62487852\n处长室：023-62461867\n地址：重庆市南岸区崇文路2号（邮编 400065）",
+      "source_name": "重庆邮电大学教务处",
+      "source_url": "https://jw.cqupt.edu.cn/",
+      "updated_at": "2026-07 核对",
+      "verified": true
+    },
+    {
+      "id": "school_calendar",
+      "title": "校历与放假安排",
+      "sample_question": "什么时候放寒假",
+      "patterns": ["校历", "(什么时候|何时|几号|哪天).{0,6}(放假|放寒假|放暑假|开学)", "(放假|放寒假|放暑假|开学).{0,4}(时间|安排|几号|哪天)", "(寒假|暑假).{0,4}(什么时候|时间|几号|哪天)"],
+      "answer": "2025—2026学年：寒假自 2026年1月26日 开始；2月28日、3月1日学生报到，3月2日正式行课。\n各学期放假/开学安排以教务处正式通知为准。",
+      "source_name": "重庆邮电大学教务处",
+      "source_url": "https://jw.cqupt.edu.cn/",
+      "updated_at": "2026-07 核对",
+      "verified": true
+    },
+    {
+      "id": "library_hours",
+      "title": "图书馆开馆时间",
+      "sample_question": "图书馆几点开门",
+      "patterns": ["图书馆.{0,6}(几点|时间|开门|关门|开馆|闭馆)"],
+      "answer": "图书馆周开放时间 105 小时（平均每天约 15 小时）。\n具体每日开闭馆时间及节假日安排以图书馆官网通知为准。",
+      "source_name": "重庆邮电大学图书馆",
+      "source_url": "https://lib.cqupt.edu.cn/",
+      "updated_at": "2026-07 核对",
+      "verified": true
+    },
+    {
+      "id": "service_hall_hours",
+      "title": "学生办事大厅服务时间",
+      "sample_question": "办事大厅几点上班",
+      "patterns": ["办事大厅.{0,6}(时间|几点|上班|开门|营业)", "(学生)?服务中心.{0,6}(时间|几点|上班)"],
+      "answer": "（待补充：请填写办事大厅服务时间）",
+      "source_name": "重庆邮电大学学生处",
+      "source_url": "https://xgb.cqupt.edu.cn/",
+      "updated_at": "",
+      "verified": false
+    },
+    {
+      "id": "xg_phone",
+      "title": "学工部/学生处联系电话",
+      "sample_question": "学工部电话多少",
+      "patterns": ["(学工部|学生处).{0,6}(电话|联系方式|怎么联系)"],
+      "answer": "（待补充：请填写学工部官方联系电话）",
+      "source_name": "重庆邮电大学学生处",
+      "source_url": "https://xgb.cqupt.edu.cn/",
+      "updated_at": "",
+      "verified": false
+    }
+  ]
+}

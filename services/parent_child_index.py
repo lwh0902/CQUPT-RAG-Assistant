@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -232,6 +233,114 @@ def load_parent_store(path: Path = PARENT_STORE_PATH) -> dict[str, dict[str, Any
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------------------
+# Cross-document citation expansion
+# ---------------------------------------------------------------------------
+
+_CITATION_RE = re.compile(r"《([^》]{4,30}(?:办法|规定|细则|手册|章程))》")
+
+# Cited-title substring -> document_id. Longest first so
+# 社会奖学金评定办法 wins over 奖学金评定办法.
+_CITATION_TARGETS: tuple[tuple[str, str], ...] = (
+    ("学生违纪处分实施办法", "disciplinary_rules_2017"),
+    ("违纪处分实施办法", "disciplinary_rules_2017"),
+    ("学生补考和重修管理规定", "retake_rules_2016"),
+    ("补考和重修管理规定", "retake_rules_2016"),
+    ("本科生学籍管理规定", "enrollment_rules_2017"),
+    ("学籍管理规定", "enrollment_rules_2017"),
+    ("本科学生成绩评定与绩点计算办法", "gpa_calculation_rules_2016"),
+    ("成绩评定与绩点计算办法", "gpa_calculation_rules_2016"),
+    ("本科生社会奖学金评定办法", "social_scholarship_rules"),
+    ("社会奖学金评定办法", "social_scholarship_rules"),
+    ("本科生奖学金评定办法", "undergraduate_scholarship_rules_2025"),
+    ("综合素质测评办法", "comprehensive_evaluation_rules_2025"),
+    # 公寓/申诉办法内嵌于学生手册，引用时回手册定向检
+    ("学生公寓管理办法", "student_manual_education_2025"),
+    ("学生申诉处理办法", "student_manual_education_2025"),
+    ("学生手册", "student_manual_education_2025"),
+)
+
+
+def extract_citation_titles(text: str) -> list[str]:
+    """Return distinct 《XX办法/规定》 titles mentioned in the text."""
+    seen: list[str] = []
+    for match in _CITATION_RE.finditer(text or ""):
+        title = match.group(1).strip()
+        if title and title not in seen:
+            seen.append(title)
+    return seen
+
+
+def resolve_cited_document_ids(title: str) -> list[str]:
+    """Map a cited regulation title to corpus document_ids (may be empty)."""
+    hits: list[str] = []
+    for key, doc_id in _CITATION_TARGETS:
+        if key in title and doc_id not in hits:
+            hits.append(doc_id)
+            break  # longest/first key wins
+    return hits
+
+
+def expand_cited_documents(
+    question: str,
+    docs: list[Document],
+    parent_store: dict[str, dict[str, Any]] | None = None,
+    *,
+    max_docs: int = 2,
+    max_pages_per_doc: int = 2,
+) -> list[Document]:
+    """One-hop cross-document expansion: when retrieved text cites 《XX办法》,
+    pull the cited document's most query-relevant pages into the pool.
+
+    Example: manual page says "按《学生违纪处分实施办法》处理" -> append the
+    disciplinary doc's pages that match the question, so the answer can name
+    the actual sanction instead of hedging "可能面临处分".
+    """
+    if not docs or max_docs <= 0 or max_pages_per_doc <= 0:
+        return list(docs)
+    store = parent_store if parent_store is not None else load_parent_store()
+    if not store:
+        return list(docs)
+
+    from services.query_normalize import extract_query_keywords
+
+    keywords = [kw for kw in extract_query_keywords(question) if kw]
+    pool_doc_ids = {
+        _meta_str((getattr(doc, "metadata", None) or {}).get("document_id"))
+        for doc in docs
+    }
+
+    cited_doc_ids: list[str] = []
+    for doc in docs:
+        for title in extract_citation_titles(getattr(doc, "page_content", "") or ""):
+            for doc_id in resolve_cited_document_ids(title):
+                if doc_id and doc_id not in pool_doc_ids and doc_id not in cited_doc_ids:
+                    cited_doc_ids.append(doc_id)
+        if len(cited_doc_ids) >= max_docs:
+            break
+
+    output = list(docs)
+    for doc_id in cited_doc_ids[:max_docs]:
+        scored_pages: list[tuple[int, int, dict[str, Any]]] = []
+        for parent in store.values():
+            if _meta_str(parent.get("document_id")) != doc_id:
+                continue
+            if parent.get("chunk_origin") != "page":
+                continue
+            text = _meta_str(parent.get("text"))
+            if not text:
+                continue
+            hits = sum(1 for kw in keywords if kw in text)
+            if hits > 0:
+                scored_pages.append((hits, int(parent.get("page_start") or 0), parent))
+        scored_pages.sort(key=lambda item: (-item[0], item[1]))
+        for _, page_no, parent in scored_pages[:max_pages_per_doc]:
+            expanded = _parent_to_document(parent, page=page_no)
+            expanded.metadata["cited_expanded"] = True
+            output.append(expanded)
+    return output
 
 
 def _parent_to_document(parent: dict[str, Any], *, page: int | None = None) -> Document:

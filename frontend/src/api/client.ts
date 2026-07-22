@@ -108,16 +108,32 @@ export interface SessionsResponse {
   sessions: Session[]
 }
 
+export interface QuickFact {
+  id: string
+  title: string
+  answer: string
+  source_name?: string
+  source_url?: string
+  updated_at?: string
+}
+
+export interface QuickFactLink {
+  id: string
+  title: string
+  sample_question: string
+}
+
 export interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
   sources?: Source[]
+  quick_fact?: QuickFact
   confidence_level?: ConfidenceLevel
   evidence_summary?: string
   uncertain_points?: string[]
   created_at: string
-  retrieval_decision?: 'supported' | 'web_only' | 'out_of_scope' | 'insufficient'
+  retrieval_decision?: 'supported' | 'web_only' | 'out_of_scope' | 'insufficient' | 'quick_fact'
 }
 
 export interface Source {
@@ -194,8 +210,57 @@ export interface StreamMessage {
   confidence_level?: ConfidenceLevel
   evidence_summary?: string
   uncertain_points?: string[]
-  retrieval_decision?: 'supported' | 'web_only' | 'out_of_scope' | 'insufficient'
+  retrieval_decision?: 'supported' | 'web_only' | 'out_of_scope' | 'insufficient' | 'quick_fact'
   memory_actions?: MemoryAction[]
+  quick_fact?: QuickFact
+}
+
+export interface McqItem {
+  question: string
+  options: Record<string, string>
+  answer: string
+  analysis: string
+}
+
+export interface QaItem {
+  question: string
+  spoken_answer: string
+  analysis: string
+}
+
+export interface InterviewSession {
+  id: string
+  company: string
+  jd_text?: string
+  resume_text?: string
+  resume_filename?: string | null
+  created_at?: string
+  mcq: McqItem[]
+  qa: QaItem[]
+  mcq_count?: number
+  qa_count?: number
+}
+
+export async function generateInterviewBank(form: FormData): Promise<InterviewSession> {
+  const { data } = await api.post<InterviewSession>('/interview/generate', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 180000,
+  })
+  return data
+}
+
+export async function fetchInterviewSessions(): Promise<InterviewSession[]> {
+  const { data } = await api.get<{ sessions: InterviewSession[] }>('/interview/sessions')
+  return (data.sessions ?? []).map((s) => ({ ...s, mcq: s.mcq ?? [], qa: s.qa ?? [] }))
+}
+
+export async function fetchInterviewSession(id: string): Promise<InterviewSession> {
+  const { data } = await api.get<InterviewSession>(`/interview/sessions/${id}`)
+  return data
+}
+
+export async function deleteInterviewSession(id: string): Promise<void> {
+  await api.delete(`/interview/sessions/${id}`)
 }
 
 export interface ChatStreamHandlers {
@@ -206,6 +271,11 @@ export interface ChatStreamHandlers {
 
 export interface ChatStreamController {
   abort: () => void
+}
+
+export async function fetchQuickFacts(): Promise<QuickFactLink[]> {
+  const { data } = await api.get<{ facts: QuickFactLink[] }>('/quick-facts')
+  return data.facts ?? []
 }
 
 function parseSseChunk(buffer: string): { events: string[]; rest: string } {
@@ -230,6 +300,7 @@ export function streamChat(
     session_id: string
     new_message: string
     web_search_enabled?: boolean
+    lang?: string
   },
   handlers: ChatStreamHandlers
 ): ChatStreamController {

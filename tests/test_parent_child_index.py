@@ -222,3 +222,113 @@ def test_expand_neighbor_pages_seed_zero_means_all_docs() -> None:
         max_seed_docs=5,
     )
     assert 12 not in [doc.metadata.get("page") for doc in capped]
+
+
+def _page_parent(doc_id: str, page: int, text: str, name: str = "办法") -> dict:
+    return {
+        "parent_id": f"{doc_id}:page:{page}",
+        "document_id": doc_id,
+        "document_name": name,
+        "title": f"第{page}页",
+        "text": text,
+        "page_start": page,
+        "page_end": page,
+        "article_nos": [],
+        "chunk_origin": "page",
+        "authority_level": 90,
+    }
+
+
+def test_extract_citation_titles_and_resolve() -> None:
+    from services.parent_child_index import (
+        extract_citation_titles,
+        resolve_cited_document_ids,
+    )
+
+    titles = extract_citation_titles(
+        "情节严重的，按照《重庆邮电大学学生违纪处分实施办法》处理；参照《学生手册》。"
+    )
+    assert "重庆邮电大学学生违纪处分实施办法" in titles
+    assert resolve_cited_document_ids("重庆邮电大学学生违纪处分实施办法") == [
+        "disciplinary_rules_2017"
+    ]
+    assert resolve_cited_document_ids("本科生社会奖学金评定办法") == [
+        "social_scholarship_rules"
+    ]
+    assert resolve_cited_document_ids("不存在的办法") == []
+
+
+def test_expand_cited_documents_pulls_cited_pages() -> None:
+    from services.parent_child_index import expand_cited_documents
+
+    store = {
+        "student_manual_education_2025:page:138": _page_parent(
+            "student_manual_education_2025",
+            138,
+            "未按时归寝记为晚归，情节严重的，按照《重庆邮电大学学生违纪处分实施办法》处理。",
+            "学生手册",
+        ),
+        "disciplinary_rules_2017:page:11": _page_parent(
+            "disciplinary_rules_2017", 11, "处分决定的送达与归档。", "处分办法"
+        ),
+        "disciplinary_rules_2017:page:12": _page_parent(
+            "disciplinary_rules_2017", 12, "晚归屡教不改的，给予警告处分。", "处分办法"
+        ),
+    }
+    seed = Document(
+        page_content="未按时归寝记为晚归，情节严重的，按照《重庆邮电大学学生违纪处分实施办法》处理。",
+        metadata={"document_id": "student_manual_education_2025", "page": 138},
+    )
+    expanded = expand_cited_documents(
+        "晚归严重会受到什么处分",
+        [seed],
+        parent_store=store,
+        max_docs=2,
+        max_pages_per_doc=2,
+    )
+    cited = [d for d in expanded if d.metadata.get("cited_expanded")]
+    assert cited, "cited document pages should be pulled in"
+    assert all(d.metadata["document_id"] == "disciplinary_rules_2017" for d in cited)
+    # 同时含“晚归+处分”的 P12 应排在只含“处分”的 P11 前
+    assert cited[0].metadata["page"] == 12
+    assert {d.metadata["page"] for d in cited} == {11, 12}
+
+
+def test_expand_cited_documents_skips_doc_already_in_pool() -> None:
+    from services.parent_child_index import expand_cited_documents
+
+    store = {
+        "student_manual_education_2025:page:138": _page_parent(
+            "student_manual_education_2025",
+            138,
+            "按照《重庆邮电大学学生违纪处分实施办法》处理。",
+            "学生手册",
+        ),
+        "disciplinary_rules_2017:page:11": _page_parent(
+            "disciplinary_rules_2017", 11, "处分种类。", "处分办法"
+        ),
+    }
+    seeds = [
+        Document(
+            page_content="按照《重庆邮电大学学生违纪处分实施办法》处理。",
+            metadata={"document_id": "student_manual_education_2025", "page": 138},
+        ),
+        Document(
+            page_content="处分种类。",
+            metadata={"document_id": "disciplinary_rules_2017", "page": 11},
+        ),
+    ]
+    expanded = expand_cited_documents(
+        "处分种类", seeds, parent_store=store, max_docs=2, max_pages_per_doc=2
+    )
+    assert not any(d.metadata.get("cited_expanded") for d in expanded)
+
+
+def test_expand_cited_documents_disabled_by_zero_cap() -> None:
+    from services.parent_child_index import expand_cited_documents
+
+    seed = Document(
+        page_content="按照《重庆邮电大学学生违纪处分实施办法》处理。",
+        metadata={"document_id": "student_manual_education_2025", "page": 138},
+    )
+    assert expand_cited_documents("处分", [seed], parent_store={}, max_docs=0) == [seed]

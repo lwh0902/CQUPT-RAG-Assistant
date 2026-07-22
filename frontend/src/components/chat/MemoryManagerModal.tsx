@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { api } from '../../api/client'
 import { useToastStore } from '../../store/toast'
 import Modal from '../ui/Modal'
+import { useT } from '../../i18n'
 
 interface MemoryItem {
   id: number
@@ -30,6 +31,7 @@ const GROUP_LABELS: Record<string, string> = {
 }
 
 export default function MemoryManagerModal() {
+  const t = useT()
   const [open, setOpen] = useState(false)
   const [memories, setMemories] = useState<MemoryItem[]>([])
   const [pending, setPending] = useState<PendingItem[]>([])
@@ -115,8 +117,8 @@ export default function MemoryManagerModal() {
         type="button"
         onClick={openModal}
         className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-tertiary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-        aria-label="记忆管理"
-        title="记忆管理"
+        aria-label={t('memory.manage')}
+        title={t('memory.manage')}
       >
         <Brain className="h-4 w-4" />
       </button>

@@ -24,7 +24,7 @@ from langchain_community.vectorstores import Chroma
 import uvicorn
 
 from rag import init_rag_system, init_bm25_index, get_strategy
-from routers import auth_router, chat_router, documents_router, memories_router, sessions_router, settings_router
+from routers import auth_router, chat_router, documents_router, interview_router, memories_router, quick_facts_router, sessions_router, settings_router
 from services.web_search import build_tool_registry
 from services.logging_config import configure_logging
 from vector_store import get_embeddings
@@ -141,6 +141,8 @@ app.include_router(chat_router)
 app.include_router(documents_router)
 app.include_router(settings_router)
 app.include_router(memories_router)
+app.include_router(quick_facts_router)
+app.include_router(interview_router)
 
 
 @app.exception_handler(RequestValidationError)

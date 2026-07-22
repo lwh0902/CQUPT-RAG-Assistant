@@ -36,6 +36,7 @@ from services.conversation_context import (
 )
 from services.llm import create_llm_completion, get_llm_client, stream_llm_text
 from services.memory_manager import MemoryManager
+from services.quick_facts import match_quick_fact, render_quick_fact_reply
 from services.retrieval import collect_evidence, format_web_evidence_for_prompt
 from services.log_context import bind_log_context, reset_log_context
 from services.working_memory import load_or_refresh_overflow_summary, split_near_overflow
@@ -74,6 +75,18 @@ class ChatRequest(BaseModel):
         default=False,
         description="是否允许本次消息调用联网搜索工具",
     )
+    lang: str = Field(
+        default="zh-CN",
+        description="界面/回答语言：zh-CN 或 en-US",
+    )
+
+    @field_validator("lang")
+    @classmethod
+    def validate_lang(cls, value: str) -> str:
+        allowed = {"zh-CN", "en-US"}
+        if value not in allowed:
+            return "zh-CN"
+        return value
 
     @field_validator("new_message")
     @classmethod
@@ -181,7 +194,7 @@ def get_generation_options(user_id: str) -> dict[str, float]:
         return {"temperature": settings.temperature, "top_p": settings.top_p}
 
 
-def build_system_prompt(hybrid_context: dict[str, Any]) -> str:
+def build_system_prompt(hybrid_context: dict[str, Any], lang: str = "zh-CN") -> str:
     knowledge = hybrid_context.get("knowledge") or "无"
     web = hybrid_context.get("web") or "无"
     long_term = hybrid_context.get("long_term") or ""
@@ -194,9 +207,16 @@ def build_system_prompt(hybrid_context: dict[str, Any]) -> str:
         f"【会话早前要点】\n{overflow_summary}\n\n" if overflow_summary else ""
     )
     long_term_block = f"【长期记忆】\n{long_term}\n\n" if long_term else ""
+    lang_block = (
+        "请用 English 回答用户。制度专名（如“行为积分”“留校察看”“综合素质测评”）"
+        "首次出现时保留中文原名并附简要英文解释；引用来源保持中文原名。\n"
+        if lang == "en-US"
+        else ""
+    )
 
     return (
         '你是“重邮极客 Agent”，是一个校园综合助手。\n'
+        f"{lang_block}"
         "你的能力包括：\n"
         "1. 基于学生手册知识回答校内制度、部门、办事流程、学籍、奖助、纪律等问题；\n"
         "2. 在需要时调用工具查询天气；\n"
@@ -231,7 +251,7 @@ def build_final_messages(
     # Keep prompt bounded: last few turns only.
     history = history[-SHORT_TERM_MESSAGE_LIMIT:]
     return [
-        {"role": "system", "content": build_system_prompt(hybrid_context)},
+        {"role": "system", "content": build_system_prompt(hybrid_context, request.lang)},
         *history,
         {"role": "user", "content": request.new_message},
     ]
@@ -763,7 +783,20 @@ async def _stream_text_events(
 # Routes
 # ---------------------------------------------------------------------------
 
-def build_retrieval_refusal(retrieval_decision: str) -> str:
+def build_retrieval_refusal(retrieval_decision: str, lang: str = "zh-CN") -> str:
+    if lang == "en-US":
+        if retrieval_decision == "insufficient":
+            return (
+                "Related excerpts were found in the knowledge base, but the evidence is not "
+                "strong enough for a reliable answer. Please retry with web search enabled; "
+                "web results are for reference only — always rely on the official university "
+                "website and formal documents."
+            )
+        return (
+            "No verifiable basis was found in the knowledge base. Please retry with web "
+            "search enabled; web results are for reference only — always rely on the "
+            "official university website and formal documents."
+        )
     if retrieval_decision == "insufficient":
         return "当前知识库检索到了相关片段，但证据不足以支持可靠回答。建议开启联网搜索后重试；网络结果仅供参考，请以学校官网和正式文件为准。"
     return "当前知识库未收录可核验的相关依据。建议开启联网搜索后重试；网络结果仅供参考，请以学校官网和正式文件为准。"
@@ -780,6 +813,19 @@ async def chat(
     bind_log_context(user_id=current_user.id, session_id=request_body.session_id)
     app_state = request.app.state
     await asyncio.to_thread(ensure_session_exists, request_body)
+
+    # Quick fact short-circuit: human-reviewed direct answer, no RAG/LLM.
+    quick_fact = await asyncio.to_thread(match_quick_fact, request_body.new_message)
+    if quick_fact is not None:
+        ai_reply = render_quick_fact_reply(quick_fact)
+        await asyncio.to_thread(save_messages, request_body, ai_reply)
+        return {
+            "reply": ai_reply,
+            "sources": [],
+            "quick_fact": quick_fact.to_dict(),
+            "retrieval_decision": "quick_fact",
+        }
+
     hybrid_context = await assemble_context_and_memory(
         user_id=request_body.user_id,
         session_id=request_body.session_id,
@@ -791,7 +837,7 @@ async def chat(
     )
     retrieval_decision = hybrid_context["retrieval_decision"]
     if retrieval_decision in {"out_of_scope", "insufficient"}:
-        ai_reply = build_retrieval_refusal(retrieval_decision)
+        ai_reply = build_retrieval_refusal(retrieval_decision, request_body.lang)
     else:
         final_messages = build_final_messages(request_body, hybrid_context)
         ai_reply = await run_agent_loop(final_messages)
@@ -846,6 +892,24 @@ async def chat_stream(
         async def run_pipeline() -> None:
             try:
                 await asyncio.to_thread(ensure_session_exists, request_body)
+
+                # Quick fact short-circuit: human-reviewed direct answer.
+                quick_fact = await asyncio.to_thread(
+                    match_quick_fact, request_body.new_message
+                )
+                if quick_fact is not None:
+                    ai_reply = render_quick_fact_reply(quick_fact)
+                    emit({"type": "start"})
+                    emit({"type": "delta", "content": ai_reply})
+                    await asyncio.to_thread(save_messages, request_body, ai_reply)
+                    emit({
+                        "type": "end",
+                        "sources": [],
+                        "quick_fact": quick_fact.to_dict(),
+                        "retrieval_decision": "quick_fact",
+                    })
+                    return
+
                 generation_options = await asyncio.to_thread(
                     get_generation_options,
                     request_body.user_id,
@@ -923,7 +987,7 @@ async def chat_stream(
                 )
 
                 if hybrid_context["retrieval_decision"] in {"out_of_scope", "insufficient"}:
-                    ai_reply = build_retrieval_refusal(hybrid_context["retrieval_decision"])
+                    ai_reply = build_retrieval_refusal(hybrid_context["retrieval_decision"], request_body.lang)
                     emit({"type": "start"})
                     emit({"type": "delta", "content": ai_reply})
                     user_message_id = await asyncio.to_thread(

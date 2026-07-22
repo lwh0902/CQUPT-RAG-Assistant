@@ -3,8 +3,10 @@ import { useState } from 'react'
 import { api } from '../../api/client'
 import { useToastStore } from '../../store/toast'
 import Modal from '../ui/Modal'
+import { useT } from '../../i18n'
 
 export default function ModelSettingsModal() {
+  const t = useT()
   const [open, setOpen] = useState(false)
   const [temperature, setTemperature] = useState(0.3)
   const [topP, setTopP] = useState(0.8)
@@ -43,8 +45,8 @@ export default function ModelSettingsModal() {
         type="button"
         onClick={openModal}
         className="ml-auto flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-tertiary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-        aria-label="模型设置"
-        title="模型设置"
+        aria-label={t('model.settings')}
+        title={t('model.settings')}
       >
         <SlidersHorizontal className="h-4 w-4" />
       </button>

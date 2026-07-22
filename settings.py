@@ -63,6 +63,38 @@ POLICY_DOCUMENTS = [
         "authority_level": 90,
         "path": str(DOWNLOADS_DIR / "重庆邮电大学本科生社会奖学金评定办法 (1).docx"),
     },
+    {
+        "document_id": "disciplinary_rules_2017",
+        "document_name": "重庆邮电大学学生违纪处分实施办法",
+        "document_type": "school_policy",
+        "topic": "discipline",
+        "authority_level": 90,
+        "path": str(DOWNLOADS_DIR / "重庆邮电大学学生违纪处分实施办法.pdf"),
+    },
+    {
+        "document_id": "retake_rules_2016",
+        "document_name": "重庆邮电大学学生补考和重修管理规定",
+        "document_type": "school_policy",
+        "topic": "exams",
+        "authority_level": 90,
+        "path": str(DOWNLOADS_DIR / "重庆邮电大学学生补考和重修管理规定.pdf"),
+    },
+    {
+        "document_id": "enrollment_rules_2017",
+        "document_name": "重庆邮电大学本科生学籍管理规定",
+        "document_type": "school_policy",
+        "topic": "enrollment",
+        "authority_level": 90,
+        "path": str(DOWNLOADS_DIR / "重庆邮电大学本科生学籍管理规定.pdf"),
+    },
+    {
+        "document_id": "gpa_calculation_rules_2016",
+        "document_name": "重庆邮电大学本科学生成绩评定与绩点计算办法",
+        "document_type": "school_policy",
+        "topic": "grading",
+        "authority_level": 85,
+        "path": str(DOWNLOADS_DIR / "重庆邮电大学本科学生成绩评定与绩点计算办法.pdf"),
+    },
 ]
 
 # Vector store and index metadata locations.
@@ -86,14 +118,14 @@ SCORE_THRESHOLD = 0.3
 # retrieval set before changing production behavior.
 RETRIEVAL_VECTOR_SUPPORTED_THRESHOLD = float(os.getenv("RETRIEVAL_VECTOR_SUPPORTED_THRESHOLD", "0.52"))
 RETRIEVAL_VECTOR_OUT_OF_SCOPE_THRESHOLD = float(os.getenv("RETRIEVAL_VECTOR_OUT_OF_SCOPE_THRESHOLD", "0.30"))
-RETRIEVAL_KEYWORD_COVERAGE_THRESHOLD = float(os.getenv("RETRIEVAL_KEYWORD_COVERAGE_THRESHOLD", "0.50"))
+RETRIEVAL_KEYWORD_COVERAGE_THRESHOLD = float(os.getenv("RETRIEVAL_KEYWORD_COVERAGE_THRESHOLD", "0.40"))
 # Strong lexical hit can support even when vector is only mid-range (common for
 # short colloquial campus questions whose wording differs from statute text).
 RETRIEVAL_BM25_SUPPORTED_THRESHOLD = float(os.getenv("RETRIEVAL_BM25_SUPPORTED_THRESHOLD", "4.0"))
-# Min vector score required for the BM25+coverage support path. Calibrated
-# 2026-07-22 on 120 gold cases: 0.28 separates campus-flavored-but-unanswerable
-# questions (hours/phone/menu, vector<=0.279) from colloquial statute QA.
-RETRIEVAL_BM25_VECTOR_FLOOR = float(os.getenv("RETRIEVAL_BM25_VECTOR_FLOOR", "0.28"))
+# Min vector score required for the BM25+coverage support path. Recalibrated
+# 2026-07-22 on the 8-document index: realtime/entity-specific asks are caught
+# by is_dynamic_info_query upstream, so the floor only guards colloquial QA.
+RETRIEVAL_BM25_VECTOR_FLOOR = float(os.getenv("RETRIEVAL_BM25_VECTOR_FLOOR", "0.05"))
 # Knowledge-path rewrite gate. auto = retrieve first, rewrite only when weak.
 REWRITE_MODE = os.getenv("REWRITE_MODE", "auto")  # auto | on | off
 REWRITE_EXPANSION_WEIGHT = float(os.getenv("REWRITE_EXPANSION_WEIGHT", "0.5"))
@@ -104,6 +136,16 @@ NEIGHBOR_PAGE_RADIUS = int(os.getenv("NEIGHBOR_PAGE_RADIUS", "1"))
 # HYBRID_FUSION_TOP_K). A fixed seed cap proved fragile: a page ranked one
 # slot outside the cap silently loses its clause-bearing neighbor page.
 NEIGHBOR_SEED_TOP_N = int(os.getenv("NEIGHBOR_SEED_TOP_N", "0"))
+# Cross-document citation expansion: when retrieved text cites 《XX办法》,
+# pull the cited document's most relevant pages into the candidate pool.
+CITED_DOC_EXPANSION_ENABLED = os.getenv("CITED_DOC_EXPANSION_ENABLED", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+CITED_DOC_MAX_DOCS = int(os.getenv("CITED_DOC_MAX_DOCS", "2"))
+CITED_DOC_MAX_PAGES_PER_DOC = int(os.getenv("CITED_DOC_MAX_PAGES_PER_DOC", "2"))
 
 # Working memory: recent turns stay verbatim; older turns collapse to one MySQL summary.
 SHORT_TERM_ROUNDS = int(os.getenv("SHORT_TERM_ROUNDS", "6"))

@@ -1,4 +1,5 @@
-import { BookOpen, FileText, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
+import { BookOpen, Briefcase, FileText, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { useChatStore } from '../../store/chat'
 import { useEffect, useRef, useState } from 'react'
 import UserMenu from '../ui/UserMenu'
@@ -6,6 +7,7 @@ import cquptLogo from '../../assets/brand/cqupt-logo.png'
 import { searchSessions } from '../../api/client'
 import type { SessionSearchResult } from '../../api/client'
 import KnowledgeBaseModal from './KnowledgeBaseModal'
+import { useT } from '../../i18n'
 
 interface SidebarProps {
   collapsed: boolean
@@ -13,6 +15,8 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
+  const t = useT()
+  const navigate = useNavigate()
   const { sessions, currentSessionId, createSession, selectSession, deleteSession, renameSession } = useChatStore()
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [menuSessionId, setMenuSessionId] = useState<string | null>(null)
@@ -87,7 +91,14 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)]"
         >
           <Plus className="h-5 w-5 shrink-0 text-[var(--text-secondary)]" />
-          <span>新建对话</span>
+          <span>{t('sidebar.newChat')}</span>
+        </button>
+        <button
+          onClick={() => navigate('/interview')}
+          className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)]"
+        >
+          <Briefcase className="h-5 w-5 shrink-0 text-[var(--text-secondary)]" />
+          <span>{t('interview.title')}</span>
         </button>
         <button
           onClick={() => setSearchOpen((v) => !v)}
@@ -98,7 +109,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           }`}
         >
           <Search className="h-5 w-5 shrink-0 text-[var(--text-secondary)]" />
-          <span>搜索聊天</span>
+          <span>{t('sidebar.searchChat')}</span>
         </button>
         {searchOpen && (
           <div className="relative px-1 pt-1">
@@ -106,7 +117,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
               autoFocus
               value={searchInput}
               onChange={(e) => handleSearchChange(e.target.value)}
-              placeholder="输入关键词搜索历史会话"
+              placeholder={t('sidebar.searchPlaceholder')}
               className="w-full rounded-lg border border-[var(--border-input)] bg-[var(--bg-input)] py-2 pl-3 pr-8 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:border-[var(--accent)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
             />
             {searchInput && (
@@ -147,7 +158,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
             }}
           />
         ) : sessions.length === 0 ? (
-          <div className="px-3 py-8 text-sm text-[var(--text-tertiary)]">暂无会话</div>
+          <div className="px-3 py-8 text-sm text-[var(--text-tertiary)]">{t('sidebar.empty')}</div>
         ) : (
           <div className="space-y-0.5">
             {sessions.map((session) => (
@@ -191,7 +202,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                         }}
                         className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--text-tertiary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
                         role="button"
-                        aria-label="会话操作"
+                        aria-label={t('sidebar.sessionActions')}
                       >
                         <MoreHorizontal className="h-4 w-4" />
                       </span>
@@ -203,7 +214,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                   <div className="absolute right-2 top-10 z-20 w-36 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-raised)] p-1 shadow-[0_12px_32px_rgba(0,0,0,0.16)]">
                     {confirmDeleteId === session.id ? (
                       <div className="p-2">
-                        <p className="mb-2 text-xs text-[var(--text-secondary)]">确认删除该会话？</p>
+                        <p className="mb-2 text-xs text-[var(--text-secondary)]">{t('sidebar.deleteConfirm')}</p>
                         <div className="flex gap-1.5">
                           <button
                             onClick={(event) => {
@@ -238,7 +249,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                           className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
                         >
                           <Pencil className="h-4 w-4" />
-                          <span>重命名</span>
+                          <span>{t('sidebar.rename')}</span>
                         </button>
                         <button
                           onClick={(event) => {
@@ -248,7 +259,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                           className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-red-500 transition-colors hover:bg-red-500/10"
                         >
                           <Trash2 className="h-4 w-4" />
-                          <span>删除</span>
+                          <span>{t('sidebar.delete')}</span>
                         </button>
                       </>
                     )}
@@ -295,7 +306,7 @@ function SearchResults({
     return (
       <div className="px-3 py-8 text-center text-sm text-[var(--text-tertiary)]">
         <FileText className="mx-auto mb-2 h-6 w-6 opacity-50" />
-        没有匹配的会话
+        {t('sidebar.noMatch')}
       </div>
     )
   }

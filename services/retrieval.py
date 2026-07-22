@@ -43,6 +43,50 @@ def is_personal_data_query(query: str) -> bool:
     return bool(_PERSONAL_DATA_QUERY_RE.search(text))
 
 
+# Dynamic / entity-specific asks a static policy manual can never answer
+# (live status, phone numbers, specific person/course/office). Same design
+# class as is_personal_data_query: stable ask-TYPE patterns, not topic routers.
+_DYNAMIC_HARD_MARKERS = (
+    "外卖", "菜单", "座位", "密码", "报修", "校车", "快递", "有号",
+)
+_DYNAMIC_SOFT_MARKERS = (
+    "今天", "今日", "明天", "今晚", "本周", "这周", "当前", "现在", "实时",
+    "几点", "营业时间", "电话", "联系方式", "在办公室", "价格", "哪家好",
+    "具体时间", "具体日期", "上课地点",
+)
+# Rule-intent words rescue a soft-dynamic phrasing back to statute QA
+# (e.g. "奖学金什么时候申请", "补考具体时间规定").
+_RULE_INTENT_MARKERS = (
+    "规定", "办法", "条件", "资格", "标准", "流程", "怎么办", "怎么算",
+    "种类", "处分", "扣分", "评定", "申请", "计算", "休学", "复学",
+    "退学", "转专业", "补考", "重修",
+)
+
+
+def is_dynamic_info_query(query: str) -> bool:
+    """True for live-status / entity-specific asks the manual cannot answer.
+
+    Hard markers (外卖/菜单/报修...) always fire. Soft markers (今天/几点/电话...)
+    fire only when the question has no rule intent and hits no covered policy
+    topic (alias lexicon) — so "宿舍门禁几点关门" still reaches the manual.
+    """
+    text = " ".join((query or "").strip().split())
+    if not text:
+        return False
+    if any(marker in text for marker in _DYNAMIC_HARD_MARKERS):
+        return True
+    if not any(marker in text for marker in _DYNAMIC_SOFT_MARKERS):
+        return False
+    if any(marker in text for marker in _RULE_INTENT_MARKERS):
+        return False
+    # Covered-topic rescue via the existing policy alias lexicon.
+    from services.query_normalize import _alias_hits
+
+    if _alias_hits(text):
+        return False
+    return True
+
+
 @dataclass(frozen=True)
 class RetrievedEvidence:
     knowledge_context: str
@@ -66,7 +110,7 @@ async def collect_evidence(
     web_search_enabled: bool,
 ) -> RetrievedEvidence:
     # Personal records are never in the mounted policy corpus.
-    if is_personal_data_query(query):
+    if is_personal_data_query(query) or is_dynamic_info_query(query):
         web_sources = []
         if web_search_enabled and tools is not None:
             web_sources = await tools.search_web(query)
@@ -234,7 +278,7 @@ def probe_retrieval_scores(
 
 def decide_from_docs(query: str, retriever: Any, docs: list[Any]) -> str:
     """Evidence-gate decision for retrieved docs (used by evaluation)."""
-    if is_personal_data_query(query):
+    if is_personal_data_query(query) or is_dynamic_info_query(query):
         return "out_of_scope"
     if not docs:
         return "out_of_scope"

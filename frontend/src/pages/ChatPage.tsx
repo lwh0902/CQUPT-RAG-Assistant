@@ -7,19 +7,24 @@ import ModelSettingsModal from '../components/chat/ModelSettingsModal'
 import ConversationSummary from '../components/chat/ConversationSummary'
 import MemoryManagerModal from '../components/chat/MemoryManagerModal'
 import MemoryConfirmBanner from '../components/chat/MemoryConfirmBanner'
+import LanguageToggle from '../components/chat/LanguageToggle'
 import { useChatStore } from '../store/chat'
+import { fetchQuickFacts } from '../api/client'
+import type { QuickFactLink } from '../api/client'
+import { useT } from '../i18n'
 import { BookOpen, FileQuestion, GraduationCap, PanelLeft, Scale } from 'lucide-react'
 import cquptBg from '../assets/brand/cqupt-bg.png'
 import cquptLogo from '../assets/brand/cqupt-logo.png'
 
 const SUGGESTIONS = [
-  { icon: GraduationCap, text: '奖学金申请条件是什么？' },
-  { icon: BookOpen, text: '补考和重修的规定有哪些？' },
-  { icon: Scale, text: '学生违纪处分有哪些类型？' },
-  { icon: FileQuestion, text: '学籍异动如何办理？' },
+  { icon: GraduationCap, key: 'chat.suggestScholarship' as const },
+  { icon: BookOpen, key: 'chat.suggestRetake' as const },
+  { icon: Scale, key: 'chat.suggestDiscipline' as const },
+  { icon: FileQuestion, key: 'chat.suggestEnrollment' as const },
 ]
 
 export default function ChatPage() {
+  const t = useT()
   const {
     sessions,
     currentSessionId,
@@ -36,7 +41,14 @@ export default function ChatPage() {
   } = useChatStore()
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 768)
+  const [quickLinks, setQuickLinks] = useState<QuickFactLink[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    fetchQuickFacts()
+      .then(setQuickLinks)
+      .catch(() => setQuickLinks([]))
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -86,6 +98,7 @@ export default function ChatPage() {
           <ConversationSummary sessionId={currentSessionId} messageCount={messages.length} />
           <MemoryManagerModal />
           <ModelSettingsModal />
+          <LanguageToggle />
         </header>
 
         <div
@@ -113,24 +126,41 @@ export default function ChatPage() {
                     <img src={cquptLogo} alt="重庆邮电大学" className="h-full w-full object-contain" />
                   </div>
                   <h1 className="text-3xl font-semibold tracking-normal text-[var(--text-primary)]">
-                    有什么可以帮你？
+                    {t('chat.emptyTitle')}
                   </h1>
                   <p className="mt-3 mb-8 text-sm text-[var(--text-secondary)]">
-                    基于校园知识库检索学生手册、学籍、奖助和办事流程
+                    {t('chat.emptySubtitle')}
                   </p>
 
                   <div className="grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2">
                     {SUGGESTIONS.map((s) => (
                       <button
-                        key={s.text}
-                        onClick={() => sendMessage(s.text)}
+                        key={s.key}
+                        onClick={() => sendMessage(t(s.key))}
                         className="flex min-h-14 items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)]/85 px-4 py-3 text-left text-sm text-[var(--text-secondary)] shadow-sm backdrop-blur transition-all hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] active:scale-[0.99] dark:bg-[#2f2f2f]/90 dark:hover:bg-[#343434]"
                       >
                         <s.icon className="h-4 w-4 shrink-0 text-[var(--text-tertiary)]" />
-                        <span className="leading-snug">{s.text}</span>
+                        <span className="leading-snug">{t(s.key)}</span>
                       </button>
                     ))}
                   </div>
+                  {quickLinks.length > 0 && (
+                    <p className="mt-4 text-xs text-[var(--text-tertiary)]">
+                      <span className="mr-2">{t('chat.quickQuery')}</span>
+                      {quickLinks.map((link, index) => (
+                        <span key={link.id}>
+                          {index > 0 && <span className="mx-1">·</span>}
+                          <button
+                            type="button"
+                            onClick={() => sendMessage(link.sample_question)}
+                            className="text-[var(--text-secondary)] underline-offset-2 hover:underline"
+                          >
+                            {link.title}
+                          </button>
+                        </span>
+                      ))}
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -173,7 +203,7 @@ export default function ChatPage() {
             <MemoryConfirmBanner />
             <ChatInput onSend={sendMessage} isStreaming={isStreaming} onStop={stopStreaming} />
             <p className="mt-2 text-center text-xs text-[var(--text-tertiary)]">
-              CQUPT RAG 可能会犯错，请核查重要信息。
+              {t('chat.disclaimer')}
             </p>
           </div>
         </div>

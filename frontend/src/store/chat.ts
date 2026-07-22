@@ -10,6 +10,7 @@ import type {
 } from '../api/client'
 import { api, streamChat } from '../api/client'
 import { useToastStore } from './toast'
+import { getLang } from '../i18n'
 
 export interface ThinkingStep {
   step: string
@@ -228,6 +229,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         session_id: sessionId,
         new_message: content,
         web_search_enabled: webSearchEnabled,
+        lang: getLang(),
       },
       {
         onMessage: (data: StreamMessage) => {
@@ -275,6 +277,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 role: 'assistant',
                 content: get().currentReply,
                 sources: data.sources,
+                quick_fact: data.quick_fact,
                 confidence_level: data.confidence_level,
                 evidence_summary: data.evidence_summary,
                 uncertain_points: data.uncertain_points,

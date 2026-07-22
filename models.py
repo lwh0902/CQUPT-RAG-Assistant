@@ -109,6 +109,52 @@ class MemoryCandidate(Base):
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
+class InterviewSession(Base):
+    """面试助手：一次 JD + 公司 + 简历的题库生成记录。"""
+
+    __tablename__ = "interview_sessions"
+
+    id: Mapped[str] = mapped_column(
+        String(50),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(50),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    company: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    jd_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    resume_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    resume_filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+    questions: Mapped[List["InterviewQuestion"]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+    )
+
+
+class InterviewQuestion(Base):
+    """面试助手：单条题目（选择题 mcq / 简答题 qa），内容为 JSON。"""
+
+    __tablename__ = "interview_questions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(
+        String(50),
+        ForeignKey("interview_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    qtype: Mapped[str] = mapped_column(String(10), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+    session: Mapped["InterviewSession"] = relationship(back_populates="questions")
+
+
 class UserUsageDaily(Base):
     """Per-user daily counters used by the single-instance quota service."""
 

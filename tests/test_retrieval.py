@@ -47,24 +47,49 @@ def test_decide_local_evidence_supports_strong_bm25_with_mid_vector() -> None:
 
 
 def test_bm25_coverage_path_blocked_when_vector_below_floor() -> None:
-    """Campus-flavored but unanswerable (library hours): BM25+coverage must not
-    override a clearly weak vector match (calibrated 2026-07-22, R086-class)."""
+    """Below the (recalibrated) floor the BM25+coverage path stays closed.
+    Realtime/entity asks are refused upstream by the dynamic-info gate."""
     assert decide_local_evidence(
         has_local_source=True,
-        vector_score=0.11,
+        vector_score=0.02,
         bm25_score=7.1,
         keyword_coverage=0.5,
     ) == "insufficient"
 
 
 def test_bm25_coverage_path_allowed_above_floor() -> None:
-    """Colloquial statute QA just above the floor stays supported (C003-class)."""
+    """Colloquial statute QA with weak-but-real vector match stays supported."""
     assert decide_local_evidence(
         has_local_source=True,
-        vector_score=0.29,
-        bm25_score=8.9,
-        keyword_coverage=0.67,
+        vector_score=0.24,
+        bm25_score=13.9,
+        keyword_coverage=1.0,
     ) == "supported"
+
+
+def test_dynamic_info_gate_refuses_realtime_asks() -> None:
+    from services.retrieval import is_dynamic_info_query
+
+    assert is_dynamic_info_query("图书馆周末几点关门？") is True
+    assert is_dynamic_info_query("宿舍空调报修电话是多少？") is True
+    assert is_dynamic_info_query("某课程考试具体时间是什么？") is True
+    assert is_dynamic_info_query("某学院辅导员今天是否在办公室？") is True
+    assert is_dynamic_info_query("学校附近租房价格是多少？") is True
+    assert is_dynamic_info_query("学生手册是否规定外卖哪家好？") is True
+    assert is_dynamic_info_query("明天重庆天气怎么样？") is True
+
+
+def test_dynamic_info_gate_rescues_statute_asks() -> None:
+    from services.retrieval import is_dynamic_info_query
+
+    # Rule intent wins over soft time markers.
+    assert is_dynamic_info_query("奖学金什么时候申请？") is False
+    assert is_dynamic_info_query("补考具体时间安排是什么规定？") is False
+    # Covered policy topic (宿舍/归寝 alias) rescues time phrasing.
+    assert is_dynamic_info_query("宿舍门禁几点关门？") is False
+    # Plain statute questions never fire.
+    assert is_dynamic_info_query("旷考了还能参加补考吗？") is False
+    assert is_dynamic_info_query("休学需要什么条件？") is False
 
 
 def test_is_personal_data_query_detects_private_record_asks() -> None:

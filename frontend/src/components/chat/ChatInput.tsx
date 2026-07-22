@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { ArrowUp, Paperclip, Square } from 'lucide-react'
+import { useT } from '../../i18n'
 
 interface ChatInputProps {
   onSend: (message: string) => void
@@ -8,6 +9,7 @@ interface ChatInputProps {
 }
 
 export default function ChatInput({ onSend, isStreaming, onStop }: ChatInputProps) {
+  const t = useT()
   const [value, setValue] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -48,8 +50,8 @@ export default function ChatInput({ onSend, isStreaming, onStop }: ChatInputProp
         <button
           type="button"
           className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
-          aria-label="添加文档"
-          title="添加文档"
+          aria-label={t('chat.attachDoc')}
+          title={t('chat.attachDoc')}
         >
           <Paperclip className="h-5 w-5" />
         </button>
@@ -59,7 +61,7 @@ export default function ChatInput({ onSend, isStreaming, onStop }: ChatInputProp
           value={value}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="有问题，尽管问"
+          placeholder={t('chat.inputPlaceholder')}
           rows={1}
           disabled={isStreaming}
           className="max-h-32 min-h-9 flex-1 resize-none bg-transparent py-2 text-base leading-6 text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
@@ -70,8 +72,8 @@ export default function ChatInput({ onSend, isStreaming, onStop }: ChatInputProp
             type="button"
             onClick={onStop}
             className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--text-primary)] text-[var(--bg-primary)] transition-opacity hover:opacity-85"
-            aria-label="停止生成"
-            title="停止生成"
+            aria-label={t('chat.stop')}
+            title={t('chat.stop')}
           >
             <Square className="h-3.5 w-3.5 fill-current" />
           </button>
@@ -81,8 +83,8 @@ export default function ChatInput({ onSend, isStreaming, onStop }: ChatInputProp
             onClick={handleSubmit}
             disabled={!canSend}
             className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--text-primary)] text-[var(--bg-primary)] transition-all hover:opacity-85 disabled:cursor-not-allowed disabled:bg-[var(--bg-tertiary)] disabled:text-[var(--text-tertiary)]"
-            aria-label="发送消息"
-            title="发送消息"
+            aria-label={t('chat.send')}
+            title={t('chat.send')}
           >
             <ArrowUp className="h-5 w-5" />
           </button>

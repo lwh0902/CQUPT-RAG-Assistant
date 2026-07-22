@@ -1,4 +1,5 @@
 import { Globe2 } from 'lucide-react'
+import { useT } from '../../i18n'
 
 interface WebSearchToggleProps {
   enabled: boolean
@@ -7,13 +8,14 @@ interface WebSearchToggleProps {
 }
 
 export default function WebSearchToggle({ enabled, disabled, onChange }: WebSearchToggleProps) {
+  const t = useT()
   return (
     <button
       type="button"
       role="switch"
       aria-checked={enabled}
-      aria-label="联网搜索"
-      title="联网搜索"
+      aria-label={t('webSearch.toggle')}
+      title={t('webSearch.toggle')}
       disabled={disabled}
       onClick={() => onChange(!enabled)}
       className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-2.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -23,7 +25,7 @@ export default function WebSearchToggle({ enabled, disabled, onChange }: WebSear
       }`}
     >
       <Globe2 className="h-3.5 w-3.5" />
-      <span>联网搜索</span>
+      <span>{t('webSearch.toggle')}</span>
     </button>
   )
 }

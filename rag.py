@@ -26,6 +26,9 @@ from settings import (
     REWRITE_EXPANSION_WEIGHT,
     NEIGHBOR_PAGE_RADIUS,
     NEIGHBOR_SEED_TOP_N,
+    CITED_DOC_EXPANSION_ENABLED,
+    CITED_DOC_MAX_DOCS,
+    CITED_DOC_MAX_PAGES_PER_DOC,
 )
 from vector_store import create_or_load_retriever
 from services.llm import get_llm_client
@@ -291,6 +294,21 @@ def _with_neighbor_pages(docs: list) -> list:
     )
 
 
+def _expand_candidate_pool(question: str, docs: list) -> list:
+    """Same-doc neighbor pages, then one-hop cross-document citation pull."""
+    pool = _with_neighbor_pages(docs)
+    if CITED_DOC_EXPANSION_ENABLED:
+        from services.parent_child_index import expand_cited_documents
+
+        pool = expand_cited_documents(
+            question,
+            pool,
+            max_docs=CITED_DOC_MAX_DOCS,
+            max_pages_per_doc=CITED_DOC_MAX_PAGES_PER_DOC,
+        )
+    return pool
+
+
 def _retrieve_hybrid(question: str, retriever, rewrite_mode: str | None = None) -> list:
     """策略 hybrid：扩候选 + 邻页补全 + 原问题精排；改写默认 auto。"""
     mode = rewrite_mode or get_rewrite_mode()
@@ -298,7 +316,7 @@ def _retrieve_hybrid(question: str, retriever, rewrite_mode: str | None = None) 
     base_docs = _hybrid_search_once(question, retriever, bm25)
 
     if mode == "off":
-        return rerank_documents(question, _with_neighbor_pages(base_docs))
+        return rerank_documents(question, _expand_candidate_pool(question, base_docs))
 
     if mode == "auto":
         # Probe on original question + current candidate context.
@@ -312,13 +330,13 @@ def _retrieve_hybrid(question: str, retriever, rewrite_mode: str | None = None) 
             bm25_score=bm25_score,
             keyword_coverage=keyword_coverage,
         ):
-            return rerank_documents(question, _with_neighbor_pages(base_docs))
+            return rerank_documents(question, _expand_candidate_pool(question, base_docs))
 
     # mode == on, or auto with weak base hit: one gated rewrite pass.
     sub_queries = _rewrite_or_original(question)
     expansions = [q for q in sub_queries if q != question][:1]
     if not expansions:
-        return rerank_documents(question, _with_neighbor_pages(base_docs))
+        return rerank_documents(question, _expand_candidate_pool(question, base_docs))
 
     result_sets = [base_docs]
     weights = [1.0]
@@ -332,8 +350,8 @@ def _retrieve_hybrid(question: str, retriever, rewrite_mode: str | None = None) 
         top_k=max(HYBRID_FUSION_TOP_K, RETRIEVAL_TOP_K * 2),
         weights=weights,
     )
-    # Neighbor pages first, then original-question lexical rerank.
-    return rerank_documents(question, _with_neighbor_pages(fused))
+    # Neighbor pages + cited docs first, then original-question lexical rerank.
+    return rerank_documents(question, _expand_candidate_pool(question, fused))
 
 
 def _rewrite_or_original(question: str) -> list[str]:
