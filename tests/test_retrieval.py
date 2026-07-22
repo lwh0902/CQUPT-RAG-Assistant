@@ -46,6 +46,27 @@ def test_decide_local_evidence_supports_strong_bm25_with_mid_vector() -> None:
     ) == "supported"
 
 
+def test_bm25_coverage_path_blocked_when_vector_below_floor() -> None:
+    """Campus-flavored but unanswerable (library hours): BM25+coverage must not
+    override a clearly weak vector match (calibrated 2026-07-22, R086-class)."""
+    assert decide_local_evidence(
+        has_local_source=True,
+        vector_score=0.11,
+        bm25_score=7.1,
+        keyword_coverage=0.5,
+    ) == "insufficient"
+
+
+def test_bm25_coverage_path_allowed_above_floor() -> None:
+    """Colloquial statute QA just above the floor stays supported (C003-class)."""
+    assert decide_local_evidence(
+        has_local_source=True,
+        vector_score=0.29,
+        bm25_score=8.9,
+        keyword_coverage=0.67,
+    ) == "supported"
+
+
 def test_is_personal_data_query_detects_private_record_asks() -> None:
     assert is_personal_data_query("我的个人综测成绩是多少？") is True
     assert is_personal_data_query("查一下我的绩点") is True

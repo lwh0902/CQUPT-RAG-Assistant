@@ -24,6 +24,9 @@ def test_chat_prompt_includes_only_retrieved_web_evidence() -> None:
     assert "https://cqupt.edu.cn/notice/1" in prompt
     assert "不得把自身常识伪装成联网检索结果" in prompt
     assert "【近期对话摘要】" not in prompt
+    # Anti-hedging rule: explicit numeric/clause evidence must be stated directly.
+    assert "必须直接给出" in prompt
+    assert "实际执行为准" in prompt
 
 
 def test_sse_pack_uses_event_stream_data_prefix() -> None:

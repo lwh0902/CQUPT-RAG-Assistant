@@ -11,6 +11,7 @@ from typing import Any
 from rag import extract_query_keywords, get_rag_context_async, init_bm25_index
 from settings import (
     RETRIEVAL_BM25_SUPPORTED_THRESHOLD,
+    RETRIEVAL_BM25_VECTOR_FLOOR,
     RETRIEVAL_KEYWORD_COVERAGE_THRESHOLD,
     RETRIEVAL_VECTOR_OUT_OF_SCOPE_THRESHOLD,
     RETRIEVAL_VECTOR_SUPPORTED_THRESHOLD,
@@ -139,7 +140,10 @@ def decide_local_evidence(
 
     Supported paths (any one is enough):
     1) strong vector similarity
-    2) solid keyword overlap with non-zero lexical score
+    2) solid keyword overlap with non-zero lexical score AND vector above a
+       floor — campus-flavored but unanswerable asks (hours/phone/menu) get
+       high BM25 + coverage from generic topic words, so BM25 alone must not
+       override a clearly weak vector match
     3) strong BM25 plus not-out-of-scope vector (covers short colloquial asks
        whose wording differs from statute text but still hits the right pages)
     """
@@ -158,7 +162,11 @@ def decide_local_evidence(
         return "out_of_scope"
     if vector_score >= RETRIEVAL_VECTOR_SUPPORTED_THRESHOLD:
         return "supported"
-    if bm25_score > 0 and keyword_coverage >= RETRIEVAL_KEYWORD_COVERAGE_THRESHOLD:
+    if (
+        bm25_score > 0
+        and keyword_coverage >= RETRIEVAL_KEYWORD_COVERAGE_THRESHOLD
+        and vector_score >= RETRIEVAL_BM25_VECTOR_FLOOR
+    ):
         return "supported"
     # Mid vector + any real overlap is usually enough for statute QA.
     if (

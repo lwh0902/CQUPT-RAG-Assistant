@@ -76,6 +76,9 @@ _STOPWORDS: set[str] = {
     "所有", "一切", "全部", "各种", "啥", "咋样", "怎么样",
     # Deictic / manner adverbs common in follow-ups; topic words carry retrieval.
     "直接", "立即", "马上", "然后",
+    # Question-shell words ("请根据制度说明：X 具体规定是什么") — they appear on
+    # nearly every statute page and let dense pages outrank the true source page.
+    "根据", "制度", "说明", "具体", "规定", "目标", "内容", "原文",
 }
 
 

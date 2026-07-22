@@ -90,6 +90,10 @@ RETRIEVAL_KEYWORD_COVERAGE_THRESHOLD = float(os.getenv("RETRIEVAL_KEYWORD_COVERA
 # Strong lexical hit can support even when vector is only mid-range (common for
 # short colloquial campus questions whose wording differs from statute text).
 RETRIEVAL_BM25_SUPPORTED_THRESHOLD = float(os.getenv("RETRIEVAL_BM25_SUPPORTED_THRESHOLD", "4.0"))
+# Min vector score required for the BM25+coverage support path. Calibrated
+# 2026-07-22 on 120 gold cases: 0.28 separates campus-flavored-but-unanswerable
+# questions (hours/phone/menu, vector<=0.279) from colloquial statute QA.
+RETRIEVAL_BM25_VECTOR_FLOOR = float(os.getenv("RETRIEVAL_BM25_VECTOR_FLOOR", "0.28"))
 # Knowledge-path rewrite gate. auto = retrieve first, rewrite only when weak.
 REWRITE_MODE = os.getenv("REWRITE_MODE", "auto")  # auto | on | off
 REWRITE_EXPANSION_WEIGHT = float(os.getenv("REWRITE_EXPANSION_WEIGHT", "0.5"))
