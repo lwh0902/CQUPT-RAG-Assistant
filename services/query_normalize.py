@@ -42,7 +42,9 @@ POLICY_ALIASES: list[tuple[str, list[str]]] = [
     ("奖学金", ["奖学金"]),
     # Dorm / daily-life policy terms (general lexicon, not topic routers).
     ("晚归", ["晚归", "晚点回寝", "晚点回宿舍", "回来太晚"]),
-    ("夜不归宿", ["夜不归宿", "彻夜未归", "整晚不回", "过夜不归"]),
+    ("夜不归宿", ["夜不归宿", "彻夜未归", "整晚不回", "过夜不归", "不回寝", "夜不归寝", "晚上不回", "不回"]),
+    # Deduction phrasing: users ask 扣多少分/扣几分; the manual says 予以扣分.
+    ("扣分", ["扣分", "扣多少分", "扣几分", "扣多少", "怎么扣"]),
     ("归寝", ["归寝", "回寝", "按时回宿舍", "回宿舍"]),
     ("学生公寓", ["学生公寓", "宿舍", "寝室", "公寓"]),
 ]
@@ -68,6 +70,12 @@ _STOPWORDS: set[str] = {
     "问题", "情况", "时候", "地方", "东西", "这样", "那样", "这么",
     "那么", "哪些", "哪种", "多少", "几个", "为何", "为什么", "咋办",
     "怎么办", "会有", "没有", "不是", "一下", "之类",
+    # Scaffolding tokens from follow-up resolution text ("用户追问：...").
+    "用户", "追问", "原问题",
+    # Generic scope words that appear all over the corpus and only add noise.
+    "所有", "一切", "全部", "各种", "啥", "咋样", "怎么样",
+    # Deictic / manner adverbs common in follow-ups; topic words carry retrieval.
+    "直接", "立即", "马上", "然后",
 }
 
 

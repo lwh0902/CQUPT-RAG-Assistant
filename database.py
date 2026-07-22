@@ -84,6 +84,28 @@ class Base(DeclarativeBase):
     pass
 
 
+def ensure_session_overflow_columns() -> None:
+    """Add working-memory overflow columns on sessions if missing (dev-friendly)."""
+    statements = [
+        "ALTER TABLE sessions ADD COLUMN overflow_summary TEXT NULL",
+        "ALTER TABLE sessions ADD COLUMN overflow_until_message_id INT NULL",
+        "ALTER TABLE sessions ADD COLUMN overflow_from_message_id INT NULL",
+        "ALTER TABLE sessions ADD COLUMN overflow_updated_at DATETIME NULL",
+    ]
+    with engine.begin() as connection:
+        for statement in statements:
+            try:
+                connection.execute(text(statement))
+            except Exception as exc:  # noqa: BLE001 - dialect-specific "duplicate column"
+                msg = str(exc).lower()
+                if "duplicate column" in msg or "exists" in msg or "1060" in msg:
+                    continue
+                # Table may not exist yet; create_all will create full schema.
+                if "doesn't exist" in msg or "1146" in msg:
+                    return
+                raise
+
+
 def ensure_database_exists() -> None:
     server_engine = create_engine(
         DATABASE_URL.set(database=None),

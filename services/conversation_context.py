@@ -79,7 +79,11 @@ def is_followup_utterance(current: str, previous_user: str | None = None) -> boo
 
 
 def resolve_followup_query(current: str, previous_user: str | None) -> str:
-    """Build a retrieval query that keeps the prior topic for follow-ups."""
+    """Build a retrieval query that keeps the prior topic for follow-ups.
+
+    Rule-based fallback: prev question + scaffolding line. Prefer the LLM
+    standalone rewrite (resolve_followup_query_llm) in the chat path.
+    """
     text = (current or "").strip()
     prev = (previous_user or "").strip()
     if not text:
@@ -88,6 +92,64 @@ def resolve_followup_query(current: str, previous_user: str | None) -> str:
         return text
     # Keep both sides: original topic + current constraint.
     return f"{prev}\n用户追问：{text}"
+
+_FOLLOWUP_REWRITE_PROMPT = (
+    "你在为一个校园制度问答系统改写用户输入。\n"
+    "规则：\n"
+    "1. 如果【当前输入】是对【上一问】的追问、指代或省略，把它补全成一句独立完整、"
+    "可直接用于检索的中文问题；\n"
+    "2. 如果不是追问，原样输出当前输入；\n"
+    "3. 只输出最终问题本身，不要解释、不要引号、不要换行、不要加标点以外的内容；\n"
+    "4. 保持用户原意，不要脑补新的条件。\n\n"
+    "【上一问】{prev}\n【当前输入】{cur}\n【改写后】"
+)
+
+
+def resolve_followup_query_llm(
+    current: str,
+    previous_user: str | None,
+    *,
+    enabled: bool | None = None,
+) -> str:
+    """LLM standalone-question rewrite for follow-ups (ChatGPT-style query rewrite).
+
+    Replaces fragile scaffolding strings like "prev\n用户追问：cur" with one
+    clean query, so keyword extraction / BM25 / vector search stay unpolluted
+    and no hand-maintained synonym list is needed for colloquial phrasing.
+    Falls back to the rule-based concatenation on any failure.
+    """
+    from settings import FOLLOWUP_LLM_RESOLVE
+
+    text = (current or "").strip()
+    prev = (previous_user or "").strip()
+    active = FOLLOWUP_LLM_RESOLVE if enabled is None else enabled
+    if not text or not prev or not active or not is_followup_utterance(text, prev):
+        return resolve_followup_query(current, previous_user)
+
+    try:
+        from services.llm import get_llm_client
+        from settings import MODEL_NAME
+
+        response = get_llm_client().chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {
+                    "role": "user",
+                    "content": _FOLLOWUP_REWRITE_PROMPT.format(prev=prev, cur=text),
+                }
+            ],
+            temperature=0.1,
+            timeout=8,
+            extra_body={"thinking": {"type": "disabled"}},
+        )
+        out = (response.choices[0].message.content or "").strip().strip('"\'“”')
+    except Exception:
+        return resolve_followup_query(current, previous_user)
+
+    # Guard rails: single line, bounded length, actually contains something.
+    if not out or "\n" in out or len(out) > 120:
+        return resolve_followup_query(current, previous_user)
+    return out
 
 
 def format_turns_for_prompt(turns: list[dict[str, str]], *, limit: int = 6) -> str:

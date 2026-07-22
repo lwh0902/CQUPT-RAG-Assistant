@@ -55,8 +55,11 @@ async def lifespan(app: FastAPI):
         )
 
     import asyncio
+    from database import ensure_session_overflow_columns
+
     await asyncio.to_thread(ensure_database_exists)
     await asyncio.to_thread(Base.metadata.create_all, bind=engine)
+    await asyncio.to_thread(ensure_session_overflow_columns)
     retriever_data, long_term_store = await asyncio.gather(
         asyncio.to_thread(init_rag_system),
         asyncio.to_thread(init_long_term_memory_store),

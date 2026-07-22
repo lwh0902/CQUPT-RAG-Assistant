@@ -30,6 +30,8 @@ def test_hybrid_off_reranks_original_question_over_expanded_candidates(monkeypat
         Document(page_content="五星文明楼评选条件……", metadata={"page": 77}),
         Document(page_content="卫生寝室评选条件：每学期安全卫生检查平均分……", metadata={"page": 76}),
         Document(page_content="无关宿舍管理通知", metadata={"page": 144}),
+        Document(page_content="另一则无关通知", metadata={"page": 20}),
+        Document(page_content="第三则无关内容", metadata={"page": 21}),
     ]
     # Return more than RETRIEVAL_TOP_K candidates from one-shot hybrid.
     monkeypatch.setattr(rag, "init_bm25_index", lambda: object())

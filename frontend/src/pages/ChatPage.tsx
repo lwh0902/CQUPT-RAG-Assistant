@@ -6,6 +6,7 @@ import WebSearchToggle from '../components/chat/WebSearchToggle'
 import ModelSettingsModal from '../components/chat/ModelSettingsModal'
 import ConversationSummary from '../components/chat/ConversationSummary'
 import MemoryManagerModal from '../components/chat/MemoryManagerModal'
+import MemoryConfirmBanner from '../components/chat/MemoryConfirmBanner'
 import { useChatStore } from '../store/chat'
 import { BookOpen, FileQuestion, GraduationCap, PanelLeft, Scale } from 'lucide-react'
 import cquptBg from '../assets/brand/cqupt-bg.png'
@@ -169,6 +170,7 @@ export default function ChatPage() {
                 onChange={setWebSearchEnabled}
               />
             </div>
+            <MemoryConfirmBanner />
             <ChatInput onSend={sendMessage} isStreaming={isStreaming} onStop={stopStreaming} />
             <p className="mt-2 text-center text-xs text-[var(--text-tertiary)]">
               CQUPT RAG 可能会犯错，请核查重要信息。

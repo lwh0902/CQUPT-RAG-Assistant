@@ -297,7 +297,7 @@ def expand_neighbor_pages(
         if key is not None:
             seen_pages.add(key)
 
-    for seed in docs[: max(0, max_seed_docs)]:
+    for seed in docs if max_seed_docs <= 0 else docs[:max_seed_docs]:
         meta = getattr(seed, "metadata", None) or {}
         doc_id = _meta_str(meta.get("document_id"))
         try:

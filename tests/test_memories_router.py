@@ -36,8 +36,10 @@ def test_list_memories_returns_only_current_users_active_memories(monkeypatch) -
             "memory_key": "answer_style",
             "memory_value": "简洁",
             "confidence": 0.95,
+            "status": "active",
         }
     ]
+    assert result["pending"] == []
 
 
 def test_delete_memory_marks_only_owners_memory_inactive_and_preserves_audit(monkeypatch) -> None:

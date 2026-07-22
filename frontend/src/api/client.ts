@@ -173,6 +173,16 @@ export interface KnowledgeDocumentsResponse {
   documents: KnowledgeDocument[]
 }
 
+export interface MemoryAction {
+  action: 'saved' | 'pending' | 'rejected' | string
+  memory_type?: string
+  memory_key?: string
+  memory_value?: string
+  candidate_id?: string | null
+  memory_id?: number | null
+  message?: string
+}
+
 export interface StreamMessage {
   type: string
   step?: string
@@ -185,6 +195,7 @@ export interface StreamMessage {
   evidence_summary?: string
   uncertain_points?: string[]
   retrieval_decision?: 'supported' | 'web_only' | 'out_of_scope' | 'insufficient'
+  memory_actions?: MemoryAction[]
 }
 
 export interface ChatStreamHandlers {

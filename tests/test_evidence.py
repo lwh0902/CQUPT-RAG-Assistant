@@ -150,3 +150,78 @@ def test_empty_evidence_is_unknown() -> None:
 
     assert result.level == "unknown"
     assert result.score == 0.0
+
+
+def test_same_manual_reward_rows_are_not_numeric_conflicts() -> None:
+    """Distinct quoted reward rows (卫生寝室 5分 / 五星文明寝室 10分 / 文明寝室 20分)
+    on neighbor pages must not collapse into one metric key."""
+    p144 = (
+        "（1）荣获学校“卫生寝室”荣誉的寝室成员加5分，寝室长另加3分；"
+        "（2）荣获学校“五星文明寝室”荣誉的寝室成员加10分，寝室长另加3分；"
+    )
+    p145 = (
+        "（3）荣获重庆市“文明寝室”荣誉的寝室成员加20分，寝室长另加6分；"
+        "（1）晚归的，扣5分/人次；夜不归宿的，扣20分/人次；"
+    )
+    evidence = [
+        EvidenceSource(
+            id="kb-145",
+            source_type="knowledge_base",
+            title="学生手册（教育管理篇）2025版",
+            snippet=p145,
+            document_id="student_manual_education_2025",
+            document_name="学生手册（教育管理篇）2025版",
+            page=145,
+            relevance_score=0.6,
+            authority_score=0.95,
+        ),
+        EvidenceSource(
+            id="kb-144",
+            source_type="knowledge_base",
+            title="学生手册（教育管理篇）2025版",
+            snippet=p144,
+            document_id="student_manual_education_2025",
+            document_name="学生手册（教育管理篇）2025版",
+            page=144,
+            relevance_score=0.55,
+            authority_score=0.95,
+        ),
+    ]
+
+    result = calculate_confidence(evidence)
+
+    assert "冲突" not in "".join(result.uncertain_points)
+    assert result.level in {"high", "medium"}
+
+
+def test_real_metric_conflict_still_flagged_same_manual() -> None:
+    """Same metric stated with different values must still warn."""
+    evidence = [
+        EvidenceSource(
+            id="kb-a",
+            source_type="knowledge_base",
+            title="奖学金办法",
+            snippet="国家奖学金奖励标准为10000元。",
+            document_id="rules_2025",
+            document_name="本科生奖学金评定办法",
+            page=3,
+            relevance_score=0.9,
+            authority_score=0.95,
+        ),
+        EvidenceSource(
+            id="kb-b",
+            source_type="knowledge_base",
+            title="奖学金办法",
+            snippet="国家奖学金奖励标准为8000元。",
+            document_id="rules_2024",
+            document_name="本科生奖学金评定办法（旧版）",
+            page=3,
+            relevance_score=0.8,
+            authority_score=0.9,
+        ),
+    ]
+
+    result = calculate_confidence(evidence)
+
+    assert "冲突" in "".join(result.uncertain_points)
+    assert result.level != "high"

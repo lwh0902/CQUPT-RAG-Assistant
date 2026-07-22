@@ -77,7 +77,10 @@ EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL", "embedding-2")
 # Wider candidate pool for hybrid fusion; final answer still uses RETRIEVAL_TOP_K.
 CANDIDATE_TOP_K = int(os.getenv("CANDIDATE_TOP_K", "16"))
 HYBRID_FUSION_TOP_K = int(os.getenv("HYBRID_FUSION_TOP_K", "12"))
-RETRIEVAL_TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "3"))
+RETRIEVAL_TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "4"))
+# Hard char budget for the final evidence block. Page texts median ~682 chars,
+# so 4 pages ≈ 2.8k chars; the cap only bites on long-page outliers.
+CONTEXT_MAX_CHARS = int(os.getenv("CONTEXT_MAX_CHARS", "4500"))
 SCORE_THRESHOLD = 0.3
 # Evidence-gate defaults. They must be calibrated against a human-reviewed
 # retrieval set before changing production behavior.
@@ -93,7 +96,50 @@ REWRITE_EXPANSION_WEIGHT = float(os.getenv("REWRITE_EXPANSION_WEIGHT", "0.5"))
 # After hybrid hits, pull same-document neighbor pages into the candidate pool
 # so cross-page clauses are less likely to be truncated in the final context.
 NEIGHBOR_PAGE_RADIUS = int(os.getenv("NEIGHBOR_PAGE_RADIUS", "1"))
-NEIGHBOR_SEED_TOP_N = int(os.getenv("NEIGHBOR_SEED_TOP_N", "5"))
+# 0 = expand neighbors for the whole hybrid pool (pool itself is bounded by
+# HYBRID_FUSION_TOP_K). A fixed seed cap proved fragile: a page ranked one
+# slot outside the cap silently loses its clause-bearing neighbor page.
+NEIGHBOR_SEED_TOP_N = int(os.getenv("NEIGHBOR_SEED_TOP_N", "0"))
+
+# Working memory: recent turns stay verbatim; older turns collapse to one MySQL summary.
+SHORT_TERM_ROUNDS = int(os.getenv("SHORT_TERM_ROUNDS", "6"))
+SHORT_TERM_MESSAGE_LIMIT = SHORT_TERM_ROUNDS * 2
+PROFILE_INJECT_K = int(os.getenv("PROFILE_INJECT_K", "5"))
+OVERFLOW_SUMMARY_ENABLED = os.getenv("OVERFLOW_SUMMARY_ENABLED", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+OVERFLOW_SUMMARY_MAX_CHARS = int(os.getenv("OVERFLOW_SUMMARY_MAX_CHARS", "300"))
+# How many past messages to load when splitting near/overflow windows.
+SESSION_HISTORY_LOAD_LIMIT = int(os.getenv("SESSION_HISTORY_LOAD_LIMIT", "80"))
+
+# Profile memory write gate (P1): regex always-on; LLM extract optional.
+MEMORY_LLM_EXTRACT_ENABLED = os.getenv("MEMORY_LLM_EXTRACT_ENABLED", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+MEMORY_AUTO_CONFIRM_MIN_CONFIDENCE = float(
+    os.getenv("MEMORY_AUTO_CONFIRM_MIN_CONFIDENCE", "0.90")
+)
+MEMORY_PENDING_MIN_CONFIDENCE = float(os.getenv("MEMORY_PENDING_MIN_CONFIDENCE", "0.70"))
+MEMORY_CANDIDATE_TTL_HOURS = int(os.getenv("MEMORY_CANDIDATE_TTL_HOURS", "72"))
+# Follow-up resolution: LLM rewrites deictic follow-ups into one clean
+# standalone query; falls back to rule-based concatenation on failure.
+FOLLOWUP_LLM_RESOLVE = os.getenv("FOLLOWUP_LLM_RESOLVE", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+# When false, skip injecting legacy Chroma session summary_window into prompt
+# (MySQL overflow summary already covers working-memory overflow).
+CHROMA_SESSION_SUMMARY_IN_PROMPT = os.getenv(
+    "CHROMA_SESSION_SUMMARY_IN_PROMPT", "false"
+).lower() in {"1", "true", "yes", "on"}
 
 # PDF chunking settings.
 CHUNK_SIZE = 500

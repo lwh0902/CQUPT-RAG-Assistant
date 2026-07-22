@@ -168,6 +168,12 @@ class ChatSession(Base):
         nullable=False,
     )
 
+    # Working-memory overflow: one rolling summary per session (MySQL, not vector DB).
+    overflow_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    overflow_until_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    overflow_from_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    overflow_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     # 多对一：当前会话归属于一个用户。
     user: Mapped["User"] = relationship(back_populates="sessions")
 

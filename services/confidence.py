@@ -111,9 +111,9 @@ def calculate_confidence(sources: Iterable[EvidenceSource]) -> ConfidenceResult:
     web_count = len(evidence) - knowledge_count
     summary_parts = []
     if knowledge_count:
-        summary_parts.append(f"{knowledge_count} 条校内知识库资料")
+        summary_parts.append(f"{knowledge_count}条校内知识库资料")
     if web_count:
-        summary_parts.append(f"{web_count} 条网络资料")
+        summary_parts.append(f"{web_count}条网络资料")
     return ConfidenceResult(
         score=bounded_score,
         level=level,
@@ -138,14 +138,33 @@ def _normalize_label(label: str) -> str:
     return text
 
 
+_CLAUSE_SPLIT_RE = re.compile(r"[。；：;]")
+_QUOTED_RE = re.compile(r"[“\"「『]([^”\"」』]{1,12})[”\"」』]")
+
+
 def _expand_label_with_topic(text: str, start: int, label: str) -> str:
-    """Pull a short topic word immediately before a thin label like 扣/为."""
+    """Pull a short topic word immediately before a thin label like 扣/为/加.
+
+    Production rules:
+    - Scope attribution to the CURRENT clause (split on 。；：) so a topic from
+      a neighbouring penalty/reward row never bleeds into this claim.
+    - Keep quoted phrases (e.g. “卫生寝室”) in the fallback key; otherwise
+      distinct clauses like “卫生寝室”荣誉…加5分 / “五星文明寝室”荣誉…加10分
+      collapse into one metric and look like a numeric conflict.
+    """
     base = _normalize_label(label)
+    window = re.sub(r"\s+", "", text[max(0, start - 24) : start])
+    clause_left = _CLAUSE_SPLIT_RE.split(window)[-1] if window else ""
+    clause = f"{clause_left}{base}"
+    quoted = _QUOTED_RE.findall(clause)
     if base and base not in {"扣", "为", "达", "共", "按"} and len(base) >= 2:
+        # Long label (usually a full CJK run). Disambiguate with the nearest
+        # quoted phrase in the same clause, otherwise rows like
+        # “卫生寝室”荣誉…加5分 / “五星文明寝室”荣誉…加10分 collapse into one key.
+        if quoted and quoted[-1] not in base:
+            return f"{quoted[-1]}{base}"
         return base
-    window = text[max(0, start - 12) : start]
-    window = re.sub(r"\s+", "", window)
-    # Prefer known campus metric heads if present in the left window.
+    # Prefer known campus metric heads if present in the current clause.
     for topic in (
         "夜不归宿",
         "晚归",
@@ -155,15 +174,23 @@ def _expand_label_with_topic(text: str, start: int, label: str) -> str:
         "学业奖学金",
         "奖励标准",
     ):
-        if topic in window:
+        if topic in clause_left:
             return topic if not base or base in {"扣", "为"} else f"{topic}{base}"
-    # Fallback: last 2–6 CJK chars before the number clause.
-    chars = re.findall(r"[\u4e00-\u9fff]+", window)
+    # Fallback: nearest quoted phrase + last CJK chars of the clause.
+    chars = re.findall(r"[\u4e00-\u9fff]+", clause_left)
     if chars:
         tail = chars[-1][-6:]
-        if base and base not in tail:
-            return f"{tail}{base}"
-        return tail
+        if base and base in tail:
+            combined = tail
+        elif base:
+            combined = f"{tail}{base}"
+        else:
+            combined = tail
+        if quoted and quoted[-1] not in combined:
+            return f"{quoted[-1]}{combined}"
+        return combined
+    if quoted:
+        return quoted[-1]
     return base
 
 

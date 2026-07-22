@@ -18,26 +18,32 @@ from sqlalchemy.orm import Session
 
 from database import engine
 from models import ChatSession, Message, User, UserModelSettings
-from settings import MODEL_NAME
+from settings import (
+    CHROMA_SESSION_SUMMARY_IN_PROMPT,
+    MODEL_NAME,
+    PROFILE_INJECT_K,
+    SESSION_HISTORY_LOAD_LIMIT,
+    SHORT_TERM_MESSAGE_LIMIT,
+    SHORT_TERM_ROUNDS,
+)
 from security import get_current_user
 from services.confidence import calculate_confidence
 from services.conversation_context import (
-    format_turns_for_prompt,
     previous_user_utterance,
     resolve_followup_query,
+    resolve_followup_query_llm,
     turns_to_chat_messages,
 )
 from services.llm import create_llm_completion, get_llm_client, stream_llm_text
 from services.memory_manager import MemoryManager
 from services.retrieval import collect_evidence, format_web_evidence_for_prompt
 from services.log_context import bind_log_context, reset_log_context
+from services.working_memory import load_or_refresh_overflow_summary, split_near_overflow
 from tools import AVAILABLE_TOOLS_MAP
 
 router = APIRouter(tags=["chat"])
 
-SHORT_TERM_ROUNDS = 4
 MESSAGES_PER_ROUND = 2
-SHORT_TERM_MESSAGE_LIMIT = SHORT_TERM_ROUNDS * MESSAGES_PER_ROUND
 LONG_TERM_MEMORY_DIR = Path("./chroma_memory_db")
 LONG_TERM_MEMORY_COLLECTION = "chat_long_term_memory"
 DEFAULT_SESSION_TITLE = "新建对话"
@@ -151,9 +157,10 @@ def persist_explicit_memories(
     session_id: str,
     content: str,
     source_message_id: int,
-) -> None:
+) -> list[dict[str, Any]]:
+    """Extract/gate memories; return client-facing actions for toast/confirm UI."""
     with Session(engine) as db:
-        memory_manager.store_explicit_candidates(
+        actions = memory_manager.store_explicit_candidates(
             db,
             user_id=user_id,
             session_id=session_id,
@@ -161,6 +168,7 @@ def persist_explicit_memories(
             source_message_id=source_message_id,
         )
         db.commit()
+        return [action.to_dict() for action in actions]
 
 
 def get_generation_options(user_id: str) -> dict[str, float]:
@@ -176,12 +184,16 @@ def get_generation_options(user_id: str) -> dict[str, float]:
 def build_system_prompt(hybrid_context: dict[str, Any]) -> str:
     knowledge = hybrid_context.get("knowledge") or "无"
     web = hybrid_context.get("web") or "无"
-    long_term = hybrid_context.get("long_term") or "无"
-    short_term = hybrid_context.get("short_term") or "无"
+    long_term = hybrid_context.get("long_term") or ""
+    overflow_summary = (hybrid_context.get("overflow_summary") or "").strip()
     resolved_query = hybrid_context.get("resolved_query") or ""
     resolved_block = (
         f"【当前问题（含追问消解）】\n{resolved_query}\n\n" if resolved_query else ""
     )
+    overflow_block = (
+        f"【会话早前要点】\n{overflow_summary}\n\n" if overflow_summary else ""
+    )
+    long_term_block = f"【长期记忆】\n{long_term}\n\n" if long_term else ""
 
     return (
         '你是“重邮极客 Agent”，是一个校园综合助手。\n'
@@ -192,15 +204,17 @@ def build_system_prompt(hybrid_context: dict[str, Any]) -> str:
         '当用户打招呼、寒暄，或者询问“你能做什么”时，'
         "请明确告诉用户你既可以查天气和课表，也可以检索并解答学生手册相关内容。\n"
         "请结合对话历史理解追问、指代和省略（例如“那不回呢”应承接上一问的主题）。\n"
+        "若提供了会话早前要点，它仅概括更早轮次；最近几轮原文在对话消息中；"
+        "不要把早前要点当作学生手册条文。\n"
         "请严格基于以下参考资料回答问题；如果问题需要实时天气或课表信息，就结合工具结果回答。\n"
         "网络资料只能引用其中真实提供的链接，不得把自身常识伪装成联网检索结果。"
         "资料不足或来源冲突时，必须明确说明不确定性。\n"
         "不要主动推荐课表或天气，除非用户明确在问这些。\n\n"
         f"{resolved_block}"
+        f"{overflow_block}"
+        f"{long_term_block}"
         f"【学生手册知识】\n{knowledge}\n\n"
-        f"【联网检索资料】\n{web}\n\n"
-        f"【长期记忆】\n{long_term}\n\n"
-        f"【近期对话摘要】\n{short_term}"
+        f"【联网检索资料】\n{web}"
     )
 
 
@@ -306,8 +320,12 @@ CHAT_SYSTEM_PROMPT = (
 )
 
 
-def load_recent_turns(session_id: str, *, limit: int = SHORT_TERM_MESSAGE_LIMIT) -> list[dict[str, str]]:
-    """Load recent chat turns oldest→newest for multi-turn grounding."""
+def load_recent_turns(
+    session_id: str,
+    *,
+    limit: int = SESSION_HISTORY_LOAD_LIMIT,
+) -> list[dict[str, Any]]:
+    """Load chat turns oldest→newest (includes message id for overflow cache keys)."""
     with Session(engine) as db:
         stmt = (
             select(Message)
@@ -316,12 +334,18 @@ def load_recent_turns(session_id: str, *, limit: int = SHORT_TERM_MESSAGE_LIMIT)
             .limit(limit)
         )
         rows = list(reversed(db.scalars(stmt).all()))
-    turns: list[dict[str, str]] = []
+    turns: list[dict[str, Any]] = []
     for row in rows:
         role = getattr(row, "role", None)
         content = (getattr(row, "content", None) or "").strip()
         if role in {"user", "assistant"} and content:
-            turns.append({"role": role, "content": content})
+            turns.append(
+                {
+                    "id": getattr(row, "id", None),
+                    "role": role,
+                    "content": content,
+                }
+            )
     return turns
 
 
@@ -457,6 +481,10 @@ def summarize_window(messages: list[Message]) -> str:
 def persist_long_term_summary(long_term_memory_store, request: ChatRequest) -> None:
     if long_term_memory_store is None:
         return
+    # Write is gated by the same flag as injection: with prompt injection off,
+    # summaries would be write-only (LLM + embedding cost, zero benefit).
+    if not CHROMA_SESSION_SUMMARY_IN_PROMPT:
+        return
 
     last_summarized_end_id = get_last_summarized_end_message_id(
         long_term_memory_store, request.session_id
@@ -524,22 +552,42 @@ async def assemble_context_and_memory(
     tool_registry=None,
     web_search_enabled: bool = False,
 ) -> dict[str, Any]:
-    recent_turns = await asyncio.to_thread(load_recent_turns, session_id)
-    prev_user = previous_user_utterance(recent_turns, current_query)
-    resolved_query = resolve_followup_query(current_query, prev_user)
-    short_term = format_turns_for_prompt(recent_turns, limit=SHORT_TERM_MESSAGE_LIMIT)
+    all_turns = await asyncio.to_thread(load_recent_turns, session_id)
+    near_turns, overflow_turns = split_near_overflow(
+        all_turns,
+        near_limit=SHORT_TERM_MESSAGE_LIMIT,
+    )
+    prev_user = previous_user_utterance(near_turns or all_turns, current_query)
+    if prev_user is None:
+        # Follow-up topic may sit in overflow; scan full history once.
+        prev_user = previous_user_utterance(all_turns, current_query)
+    resolved_query = await asyncio.to_thread(
+        resolve_followup_query_llm, current_query, prev_user
+    )
 
-    def get_long_term() -> str:
+    def get_overflow_and_profile() -> tuple[str, str]:
         with Session(engine) as db:
-            structured_memory = memory_manager.render_active_context(db, user_id)
+            overflow_summary = load_or_refresh_overflow_summary(
+                db,
+                session_id=session_id,
+                overflow=overflow_turns,
+            )
+            structured_memory = memory_manager.render_active_context(
+                db,
+                user_id,
+                query=resolved_query or current_query,
+                limit=PROFILE_INJECT_K,
+            )
+        return overflow_summary, structured_memory
 
-        if long_term_memory_store is None:
+    def get_long_term(structured_memory: str) -> str:
+        if long_term_memory_store is None or not CHROMA_SESSION_SUMMARY_IN_PROMPT:
             return structured_memory
 
-        # Retrieve long-term memory with the resolved multi-turn query.
+        # Optional legacy Chroma session summaries (off by default; MySQL overflow covers WM).
         docs = long_term_memory_store.similarity_search(
             query=resolved_query or current_query,
-            k=4,
+            k=1,
             filter={
                 "$and": [
                     {"session_id": session_id},
@@ -562,19 +610,21 @@ async def assemble_context_and_memory(
             web_search_enabled=web_search_enabled,
         )
 
-    long_term, retrieval = await asyncio.gather(
-        asyncio.to_thread(get_long_term),
+    (overflow_summary, structured_memory), retrieval = await asyncio.gather(
+        asyncio.to_thread(get_overflow_and_profile),
         get_retrieval(),
     )
+    long_term = await asyncio.to_thread(get_long_term, structured_memory)
 
     return {
-        "short_term": short_term,
+        "overflow_summary": overflow_summary,
         "long_term": long_term,
         "knowledge": retrieval.knowledge_context,
         "web": format_web_evidence_for_prompt(retrieval.web_sources),
         "sources": retrieval.sources,
         "retrieval_decision": retrieval.decision,
-        "recent_turns": recent_turns,
+        "recent_turns": near_turns,
+        "overflow_turns": overflow_turns,
         "resolved_query": resolved_query,
         "previous_user": prev_user,
     }
@@ -744,7 +794,7 @@ async def chat(
         final_messages = build_final_messages(request_body, hybrid_context)
         ai_reply = await run_agent_loop(final_messages)
     user_message_id = await asyncio.to_thread(save_messages, request_body, ai_reply)
-    await asyncio.to_thread(
+    memory_actions = await asyncio.to_thread(
         persist_explicit_memories,
         request_body.user_id,
         request_body.session_id,
@@ -765,6 +815,7 @@ async def chat(
         "evidence_summary": confidence.evidence_summary,
         "uncertain_points": confidence.uncertain_points,
         "retrieval_decision": hybrid_context["retrieval_decision"],
+        "memory_actions": memory_actions,
     }
 
 
@@ -837,14 +888,14 @@ async def chat_stream(
                         request_body,
                         ai_reply,
                     )
-                    await asyncio.to_thread(
+                    memory_actions = await asyncio.to_thread(
                         persist_explicit_memories,
                         request_body.user_id,
                         request_body.session_id,
                         request_body.new_message,
                         user_message_id,
                     )
-                    emit({"type": "end", "sources": []})
+                    emit({"type": "end", "sources": [], "memory_actions": memory_actions})
                     return
 
                 emit({
@@ -878,7 +929,7 @@ async def chat_stream(
                         request_body,
                         ai_reply,
                     )
-                    await asyncio.to_thread(
+                    memory_actions = await asyncio.to_thread(
                         persist_explicit_memories,
                         request_body.user_id,
                         request_body.session_id,
@@ -889,6 +940,7 @@ async def chat_stream(
                         "type": "end",
                         "sources": [],
                         "retrieval_decision": hybrid_context["retrieval_decision"],
+                        "memory_actions": memory_actions,
                     })
                     return
 
@@ -919,7 +971,7 @@ async def chat_stream(
                     request_body,
                     ai_reply,
                 )
-                await asyncio.to_thread(
+                memory_actions = await asyncio.to_thread(
                     persist_explicit_memories,
                     request_body.user_id,
                     request_body.session_id,
@@ -944,6 +996,7 @@ async def chat_stream(
                     "evidence_summary": confidence.evidence_summary,
                     "uncertain_points": confidence.uncertain_points,
                     "retrieval_decision": hybrid_context["retrieval_decision"],
+                    "memory_actions": memory_actions,
                 })
             except HTTPException as exc:
                 detail = exc.detail

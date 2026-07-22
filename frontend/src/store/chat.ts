@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type {
   ChatStreamController,
   ConfidenceLevel,
+  MemoryAction,
   Session,
   Message,
   Source,
@@ -39,6 +40,7 @@ interface ChatState {
   currentUncertainPoints: string[]
   webSearchEnabled: boolean
   streamController: ChatStreamController | null
+  pendingMemoryActions: MemoryAction[]
 
   fetchSessions: () => Promise<void>
   createSession: () => Promise<string | null>
@@ -53,6 +55,9 @@ interface ChatState {
   retryLastWithWebSearch: () => void
   resetStream: () => void
   cleanup: () => void
+  dismissPendingMemory: (candidateId: string) => void
+  confirmPendingMemory: (candidateId: string) => Promise<void>
+  rejectPendingMemory: (candidateId: string) => Promise<void>
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -68,6 +73,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   currentUncertainPoints: [],
   webSearchEnabled: false,
   streamController: null,
+  pendingMemoryActions: [],
 
   fetchSessions: async () => {
     try {
@@ -275,6 +281,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 retrieval_decision: data.retrieval_decision,
                 created_at: new Date().toISOString(),
               }
+              const memoryActions = data.memory_actions ?? []
+              for (const action of memoryActions) {
+                if (action.action === 'saved' && action.message) {
+                  useToastStore.getState().addToast(action.message, 'success')
+                }
+              }
+              const pending = memoryActions.filter(
+                (action) => action.action === 'pending' && action.candidate_id,
+              )
               set((prev) => ({
                 messages: [...prev.messages, assistantMessage],
                 isStreaming: false,
@@ -283,6 +298,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 currentEvidenceSummary: data.evidence_summary,
                 currentUncertainPoints: data.uncertain_points ?? [],
                 streamController: null,
+                pendingMemoryActions: pending.length
+                  ? [...pending, ...prev.pendingMemoryActions.filter((item) => !pending.some((p) => p.candidate_id === item.candidate_id))]
+                  : prev.pendingMemoryActions,
               }))
               get().fetchSessions()
               break
@@ -397,5 +415,40 @@ export const useChatStore = create<ChatState>((set, get) => ({
   cleanup: () => {
     get().streamController?.abort()
     set({ streamController: null })
+  },
+
+  dismissPendingMemory: (candidateId: string) => {
+    set((prev) => ({
+      pendingMemoryActions: prev.pendingMemoryActions.filter(
+        (item) => item.candidate_id !== candidateId,
+      ),
+    }))
+  },
+
+  confirmPendingMemory: async (candidateId: string) => {
+    try {
+      const { data } = await api.post<{ status: string; message?: string }>(
+        `/memories/candidates/${candidateId}/confirm`,
+      )
+      if (data.status === 'confirmed') {
+        useToastStore.getState().addToast(data.message || '已记住', 'success')
+      } else {
+        useToastStore.getState().addToast('确认失败，请稍后重试', 'info')
+      }
+    } catch {
+      useToastStore.getState().addToast('确认记忆失败', 'error')
+    } finally {
+      get().dismissPendingMemory(candidateId)
+    }
+  },
+
+  rejectPendingMemory: async (candidateId: string) => {
+    try {
+      await api.post(`/memories/candidates/${candidateId}/reject`)
+    } catch {
+      useToastStore.getState().addToast('忽略记忆失败', 'error')
+    } finally {
+      get().dismissPendingMemory(candidateId)
+    }
   },
 }))

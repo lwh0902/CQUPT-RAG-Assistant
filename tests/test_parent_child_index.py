@@ -181,3 +181,44 @@ def test_expand_neighbor_pages_appends_adjacent_page_parents() -> None:
     assert 11 in pages
     assert 12 in pages
     assert any(doc.metadata.get("neighbor_expanded") for doc in expanded if doc.metadata.get("page") == 12)
+
+
+def test_expand_neighbor_pages_seed_zero_means_all_docs() -> None:
+    """max_seed_docs<=0 must treat every doc as a seed (pool is bounded upstream)."""
+    parent_store = {
+        "manual:page:12": {
+            "parent_id": "manual:page:12",
+            "document_id": "manual",
+            "document_name": "手册",
+            "title": "第12页",
+            "text": "第十二条 转学条件。",
+            "page_start": 12,
+            "page_end": 12,
+            "article_nos": [],
+            "chunk_origin": "page",
+            "authority_level": 70,
+        },
+    }
+    late_seed = Document(
+        page_content="tail hit",
+        metadata={"document_id": "manual", "page": 11, "parent_id": "manual:page:11"},
+    )
+    fillers = [
+        Document(page_content=f"f{i}", metadata={"document_id": "manual", "page": 100 + i})
+        for i in range(6)
+    ]
+    # late_seed sits beyond any fixed top-5 cap; with 0 it must still expand.
+    expanded = expand_neighbor_pages(
+        [*fillers, late_seed],
+        parent_store=parent_store,
+        radius=1,
+        max_seed_docs=0,
+    )
+    assert 12 in [doc.metadata.get("page") for doc in expanded]
+    capped = expand_neighbor_pages(
+        [*fillers, late_seed],
+        parent_store=parent_store,
+        radius=1,
+        max_seed_docs=5,
+    )
+    assert 12 not in [doc.metadata.get("page") for doc in capped]

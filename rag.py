@@ -20,6 +20,7 @@ from settings import (
     MODEL_NAME,
     RETRIEVAL_TOP_K,
     CANDIDATE_TOP_K,
+    CONTEXT_MAX_CHARS,
     HYBRID_FUSION_TOP_K,
     REWRITE_MODE,
     REWRITE_EXPANSION_WEIGHT,
@@ -135,20 +136,29 @@ def _finalize_retrieved_docs(docs: list) -> list:
     return expand_children_to_parents(docs)
 
 
-def format_context(docs) -> tuple[str, list[int]]:
+def format_context(docs, *, max_chars: int | None = None) -> tuple[str, list[int]]:
+    budget = CONTEXT_MAX_CHARS if max_chars is None else max_chars
     context_parts = []
     source_pages = []
+    used = 0
     for doc in docs:
         page = doc.metadata.get("page")
         document_name = doc.metadata.get("document_name") or "学生手册"
         page_text = doc.page_content.strip()
         if not page_text:
             continue
+        part = (
+            f"【{document_name}｜第 {page} 页】\n{page_text}"
+            if page is not None
+            else f"【{document_name}】\n{page_text}"
+        )
+        # Always keep the first (strongest) doc; afterwards respect the budget.
+        if context_parts and used + len(part) > budget:
+            break
+        used += len(part)
         if page is not None:
             source_pages.append(page)
-            context_parts.append(f"【{document_name}｜第 {page} 页】\n{page_text}")
-        else:
-            context_parts.append(f"【{document_name}】\n{page_text}")
+        context_parts.append(part)
     return "\n\n".join(context_parts), sorted(set(source_pages))
 
 
@@ -184,8 +194,8 @@ def rerank_documents(question: str, docs, *, top_k: int | None = None) -> list:
                 # Light bonus when the keyword appears more than once.
                 lexical_score += min(3, haystack.count(kw) - 1)
         # Prefer pages that actually state sanctions / numeric rules when the
-        # user asks about 惩罚/处分/扣分 — helps neighbor-expanded pages surface.
-        if any(token in question_text for token in ("惩罚", "处分", "扣分", "处理")):
+        # user asks about 惩罚/处分/扣分/后果 — helps neighbor-expanded pages surface.
+        if any(token in question_text for token in ("惩罚", "处分", "扣分", "处理", "后果", "影响", "严重")):
             for token in ("扣分", "处分", "处理", "晚归", "夜不归宿"):
                 if token in haystack:
                     lexical_score += 4
