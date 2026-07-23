@@ -19,6 +19,7 @@ node_modules/
 frontend/test-results/
 
 *.png
+!frontend/public/tutor-fairy.png
 *.jpg
 *.jpeg
 *.gif
