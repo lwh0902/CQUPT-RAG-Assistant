@@ -14,7 +14,7 @@ type TutorThread = {
 }
 
 const STORAGE_THREADS = 'interview_tutor_threads_v1'
-const STORAGE_UI = 'interview_tutor_ui_v1'
+const STORAGE_UI = 'interview_tutor_ui_v2'
 
 type UiState = {
   fabX: number
@@ -26,10 +26,12 @@ type UiState = {
   open: boolean
 }
 
+type ResizeCorner = 'nw' | 'ne' | 'sw' | 'se'
+
 const DEFAULT_SIZE = { w: 380, h: 500 }
 const MIN_SIZE = { w: 300, h: 360 }
-const MAX_SIZE = { w: 560, h: 740 }
-const FAB_SIZE = 120
+const MAX_SIZE = { w: 640, h: 820 }
+const FAB_SIZE = 148
 
 function uid() {
   return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
@@ -51,39 +53,19 @@ function saveThreads(threads: TutorThread[]) {
 }
 
 function defaultUi(): UiState {
-  const margin = 24
+  const margin = 20
   const w = DEFAULT_SIZE.w
   const h = DEFAULT_SIZE.h
   const fabX = Math.max(margin, window.innerWidth - FAB_SIZE - margin)
-  const fabY = Math.max(margin, window.innerHeight - FAB_SIZE - margin - 24)
+  const fabY = Math.max(margin, window.innerHeight - FAB_SIZE - margin - 16)
   return {
     fabX,
     fabY,
     panelX: Math.max(margin, fabX + FAB_SIZE - w),
-    panelY: Math.max(margin, fabY - h + 40),
+    panelY: Math.max(margin, fabY - h + 56),
     w,
     h,
     open: false,
-  }
-}
-
-function loadUi(): UiState {
-  try {
-    const raw = localStorage.getItem(STORAGE_UI)
-    if (!raw) return defaultUi()
-    const parsed = JSON.parse(raw) as Partial<UiState>
-    const base = defaultUi()
-    return clampUi({
-      fabX: num(parsed.fabX, base.fabX),
-      fabY: num(parsed.fabY, base.fabY),
-      panelX: num(parsed.panelX, base.panelX),
-      panelY: num(parsed.panelY, base.panelY),
-      w: num(parsed.w, base.w),
-      h: num(parsed.h, base.h),
-      open: false,
-    })
-  } catch {
-    return defaultUi()
   }
 }
 
@@ -109,32 +91,43 @@ function clampUi(ui: UiState): UiState {
   }
 }
 
+function loadUi(): UiState {
+  try {
+    const raw = localStorage.getItem(STORAGE_UI)
+    if (!raw) return defaultUi()
+    const parsed = JSON.parse(raw) as Partial<UiState>
+    const base = defaultUi()
+    return clampUi({
+      fabX: num(parsed.fabX, base.fabX),
+      fabY: num(parsed.fabY, base.fabY),
+      panelX: num(parsed.panelX, base.panelX),
+      panelY: num(parsed.panelY, base.panelY),
+      w: num(parsed.w, base.w),
+      h: num(parsed.h, base.h),
+      open: false,
+    })
+  } catch {
+    return defaultUi()
+  }
+}
+
 function titleFromMessages(messages: ChatMsg[]): string {
   const firstUser = messages.find((m) => m.role === 'user')?.content?.trim()
   if (!firstUser) return '新对话'
   return firstUser.replace(/\s+/g, ' ').slice(0, 24)
 }
 
-function TutorMascot({ size = 96 }: { size?: number }) {
+function Fairy({ size = 120, className = '' }: { size?: number; className?: string }) {
   return (
-    <div className="tutor-mascot" style={{ width: size, height: size }} aria-hidden>
-      <div className="tutor-mascot-shadow" />
-      <div className="tutor-mascot-wing tutor-mascot-wing-l" />
-      <div className="tutor-mascot-wing tutor-mascot-wing-r" />
-      <div className="tutor-mascot-body">
-        <div className="tutor-mascot-hair" />
-        <div className="tutor-mascot-face">
-          <span className="tutor-mascot-eye l" />
-          <span className="tutor-mascot-eye r" />
-          <span className="tutor-mascot-blush l" />
-          <span className="tutor-mascot-blush r" />
-          <span className="tutor-mascot-mouth" />
-        </div>
-        <div className="tutor-mascot-flower l" />
-        <div className="tutor-mascot-flower r" />
-        <div className="tutor-mascot-gem" />
-      </div>
-    </div>
+    <img
+      src="/tutor-fairy.svg"
+      alt=""
+      draggable={false}
+      width={size}
+      height={size}
+      className={`select-none ${className}`}
+      style={{ width: size, height: size, objectFit: 'contain' }}
+    />
   )
 }
 
@@ -151,7 +144,7 @@ export default function InterviewTutor() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<{ abort: () => void } | null>(null)
   const dragRef = useRef<{
-    mode: 'panel' | 'resize' | 'fab'
+    mode: 'panel' | 'fab' | ResizeCorner
     startX: number
     startY: number
     orig: UiState
@@ -207,13 +200,12 @@ export default function InterviewTutor() {
 
   const openPanel = useCallback(() => {
     setUi((prev) => {
-      // Open panel near the character.
       const panelX = Math.min(
         Math.max(8, prev.fabX + FAB_SIZE - prev.w),
         Math.max(8, window.innerWidth - prev.w - 8),
       )
       const panelY = Math.min(
-        Math.max(8, prev.fabY - prev.h + 48),
+        Math.max(8, prev.fabY - prev.h + 64),
         Math.max(8, window.innerHeight - prev.h - 8),
       )
       return clampUi({ ...prev, panelX, panelY, open: true })
@@ -330,7 +322,10 @@ export default function InterviewTutor() {
             fabY: drag.orig.fabY + dy,
           }),
         )
-      } else if (drag.mode === 'panel') {
+        return
+      }
+
+      if (drag.mode === 'panel') {
         setUi((prev) =>
           clampUi({
             ...prev,
@@ -338,15 +333,53 @@ export default function InterviewTutor() {
             panelY: drag.orig.panelY + dy,
           }),
         )
-      } else if (drag.mode === 'resize') {
-        setUi((prev) =>
-          clampUi({
-            ...prev,
-            w: drag.orig.w + dx,
-            h: drag.orig.h + dy,
-          }),
-        )
+        return
       }
+
+      // 4-corner resize
+      const o = drag.orig
+      let nextX = o.panelX
+      let nextY = o.panelY
+      let nextW = o.w
+      let nextH = o.h
+
+      if (drag.mode === 'se') {
+        nextW = o.w + dx
+        nextH = o.h + dy
+      } else if (drag.mode === 'sw') {
+        nextW = o.w - dx
+        nextH = o.h + dy
+        nextX = o.panelX + dx
+      } else if (drag.mode === 'ne') {
+        nextW = o.w + dx
+        nextH = o.h - dy
+        nextY = o.panelY + dy
+      } else if (drag.mode === 'nw') {
+        nextW = o.w - dx
+        nextH = o.h - dy
+        nextX = o.panelX + dx
+        nextY = o.panelY + dy
+      }
+
+      // Keep opposite edge anchored when hitting min/max.
+      const clampedW = Math.min(MAX_SIZE.w, Math.max(MIN_SIZE.w, nextW))
+      const clampedH = Math.min(MAX_SIZE.h, Math.max(MIN_SIZE.h, nextH))
+      if (drag.mode === 'sw' || drag.mode === 'nw') {
+        nextX = o.panelX + (o.w - clampedW)
+      }
+      if (drag.mode === 'ne' || drag.mode === 'nw') {
+        nextY = o.panelY + (o.h - clampedH)
+      }
+
+      setUi((prev) =>
+        clampUi({
+          ...prev,
+          panelX: nextX,
+          panelY: nextY,
+          w: clampedW,
+          h: clampedH,
+        }),
+      )
     }
 
     const onUp = () => {
@@ -354,9 +387,7 @@ export default function InterviewTutor() {
       dragRef.current = null
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
-      if (drag?.mode === 'fab' && !drag.moved) {
-        openPanel()
-      }
+      if (drag?.mode === 'fab' && !drag.moved) openPanel()
     }
 
     window.addEventListener('pointermove', onMove)
@@ -367,7 +398,7 @@ export default function InterviewTutor() {
     }
   }, [openPanel])
 
-  const beginDrag = (e: React.PointerEvent, mode: 'panel' | 'resize' | 'fab') => {
+  const beginDrag = (e: React.PointerEvent, mode: 'panel' | 'fab' | ResizeCorner) => {
     e.preventDefault()
     e.stopPropagation()
     dragRef.current = {
@@ -378,8 +409,16 @@ export default function InterviewTutor() {
       moved: false,
     }
     document.body.style.userSelect = 'none'
-    document.body.style.cursor = mode === 'resize' ? 'nwse-resize' : 'grabbing'
+    document.body.style.cursor =
+      mode === 'panel' || mode === 'fab'
+        ? 'grabbing'
+        : mode === 'nw' || mode === 'se'
+          ? 'nwse-resize'
+          : 'nesw-resize'
   }
+
+  const cornerClass =
+    'absolute z-10 h-4 w-4 rounded-sm bg-transparent hover:bg-[var(--accent)]/20'
 
   if (!ui.open) {
     return (
@@ -388,7 +427,7 @@ export default function InterviewTutor() {
           <button
             type="button"
             onClick={openPanel}
-            className="tutor-bubble absolute bottom-[108px] right-0 w-[158px] rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left text-xs leading-snug text-[var(--text-secondary)] shadow-lg"
+            className="tutor-bubble absolute -top-2 right-0 w-[168px] -translate-y-full rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-left text-xs leading-snug text-[var(--text-secondary)] shadow-lg"
           >
             {t('interview.tutorBubble')}
             <span className="tutor-bubble-tail" />
@@ -397,15 +436,17 @@ export default function InterviewTutor() {
         <button
           type="button"
           onPointerDown={(e) => beginDrag(e, 'fab')}
-          className="tutor-fab-wrap relative flex w-[120px] flex-col items-center"
+          className="tutor-fab-wrap relative flex w-[148px] flex-col items-center"
           title={t('interview.tutorTitle')}
         >
-          <TutorMascot size={104} />
-          <span className="mt-0.5 rounded-full border border-[var(--border)] bg-[var(--surface)]/95 px-2.5 py-0.5 text-[11px] font-medium text-[var(--text-secondary)] shadow">
+          <span className="tutor-float inline-flex">
+            <Fairy size={132} />
+          </span>
+          <span className="mt-[-4px] rounded-full border border-[var(--border)] bg-[var(--surface)]/95 px-3 py-1 text-[11px] font-medium text-[var(--text-secondary)] shadow">
             {t('interview.tutorFab')}
           </span>
         </button>
-        <style>{mascotCss}</style>
+        <style>{floatCss}</style>
       </div>
     )
   }
@@ -416,10 +457,10 @@ export default function InterviewTutor() {
       style={{ left: ui.panelX, top: ui.panelY, width: ui.w, height: ui.h }}
     >
       <header
-        className="flex cursor-grab items-center gap-2 border-b border-[var(--border)] bg-[var(--surface)]/90 px-3 py-2.5 active:cursor-grabbing"
+        className="flex cursor-grab items-center gap-2 border-b border-[var(--border)] bg-[var(--surface)]/90 px-3 py-2 active:cursor-grabbing"
         onPointerDown={(e) => beginDrag(e, 'panel')}
       >
-        <TutorMascot size={34} />
+        <Fairy size={40} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">{t('interview.tutorTitle')}</p>
           <p className="truncate text-[11px] text-[var(--text-tertiary)]">
@@ -510,9 +551,7 @@ export default function InterviewTutor() {
         <div className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
           {messages.length === 0 && (
             <div className="flex items-start gap-2">
-              <div className="shrink-0">
-                <TutorMascot size={48} />
-              </div>
+              <Fairy size={52} className="shrink-0" />
               <div className="rounded-2xl bg-[var(--bg-secondary)] px-3 py-2.5 text-xs leading-relaxed text-[var(--text-secondary)]">
                 {t('interview.tutorWelcome')}
               </div>
@@ -570,155 +609,46 @@ export default function InterviewTutor() {
         </div>
       )}
 
+      {/* four-corner resize handles */}
       <div
-        className="absolute bottom-0 right-0 h-5 w-5 cursor-nwse-resize"
-        onPointerDown={(e) => beginDrag(e, 'resize')}
-        title="resize"
+        className={`${cornerClass} left-0 top-0 cursor-nwse-resize`}
+        onPointerDown={(e) => beginDrag(e, 'nw')}
+      />
+      <div
+        className={`${cornerClass} right-0 top-0 cursor-nesw-resize`}
+        onPointerDown={(e) => beginDrag(e, 'ne')}
+      />
+      <div
+        className={`${cornerClass} bottom-0 left-0 cursor-nesw-resize`}
+        onPointerDown={(e) => beginDrag(e, 'sw')}
+      />
+      <div
+        className={`${cornerClass} bottom-0 right-0 cursor-nwse-resize`}
+        onPointerDown={(e) => beginDrag(e, 'se')}
       >
-        <div className="absolute bottom-1.5 right-1.5 h-2 w-2 border-b-2 border-r-2 border-[var(--text-tertiary)] opacity-70" />
+        <div className="absolute bottom-1 right-1 h-2 w-2 border-b-2 border-r-2 border-[var(--text-tertiary)] opacity-70" />
       </div>
 
-      <style>{mascotCss}</style>
+      <style>{floatCss}</style>
     </div>
   )
 }
 
-const mascotCss = `
-  .tutor-mascot {
-    position: relative;
-    display: inline-block;
-    animation: tutor-float 2.4s ease-in-out infinite;
-    filter: drop-shadow(0 8px 14px rgba(52, 211, 153, 0.28));
+const floatCss = `
+  .tutor-float {
+    animation: tutor-float 2.6s ease-in-out infinite;
+    filter: drop-shadow(0 10px 16px rgba(56, 189, 248, 0.28));
   }
-  .tutor-mascot-shadow {
-    position: absolute;
-    left: 50%;
-    bottom: 2%;
-    width: 48%;
-    height: 10%;
-    transform: translateX(-50%);
-    background: radial-gradient(ellipse, rgba(0,0,0,0.16), transparent 70%);
-  }
-  .tutor-mascot-body {
-    position: absolute;
-    inset: 18% 22% 12% 22%;
-    border-radius: 48% 48% 42% 42%;
-    background: linear-gradient(180deg, #f0fbff 0%, #d9f7ff 45%, #c5f0ff 100%);
-    border: 1.5px solid rgba(125, 211, 252, 0.7);
-    overflow: hidden;
-  }
-  .tutor-mascot-hair {
-    position: absolute;
-    left: 8%;
-    right: 8%;
-    top: -6%;
-    height: 42%;
-    border-radius: 50% 50% 40% 40%;
-    background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%);
-  }
-  .tutor-mascot-hair::after {
-    content: '';
-    position: absolute;
-    left: 42%;
-    top: -18%;
-    width: 18%;
-    height: 34%;
-    border-radius: 40%;
-    background: #7dd3fc;
-    transform: rotate(-12deg);
-  }
-  .tutor-mascot-face {
-    position: absolute;
-    inset: 34% 18% 28% 18%;
-  }
-  .tutor-mascot-eye {
-    position: absolute;
-    top: 28%;
-    width: 14%;
-    height: 18%;
-    border-radius: 50%;
-    background: #0f172a;
-  }
-  .tutor-mascot-eye.l { left: 18%; }
-  .tutor-mascot-eye.r { right: 18%; }
-  .tutor-mascot-eye::after {
-    content: '';
-    position: absolute;
-    top: 15%;
-    right: 15%;
-    width: 35%;
-    height: 35%;
-    border-radius: 50%;
-    background: #fff;
-  }
-  .tutor-mascot-blush {
-    position: absolute;
-    top: 52%;
-    width: 16%;
-    height: 10%;
-    border-radius: 50%;
-    background: rgba(251, 113, 133, 0.35);
-  }
-  .tutor-mascot-blush.l { left: 8%; }
-  .tutor-mascot-blush.r { right: 8%; }
-  .tutor-mascot-mouth {
-    position: absolute;
-    left: 50%;
-    top: 68%;
-    width: 16%;
-    height: 10%;
-    border-radius: 0 0 12px 12px;
-    border-bottom: 2px solid #fb7185;
-    transform: translateX(-50%);
-  }
-  .tutor-mascot-flower {
-    position: absolute;
-    top: 10%;
-    width: 18%;
-    height: 18%;
-    border-radius: 50%;
-    background: radial-gradient(circle at 30% 30%, #fef08a, #86efac 60%, #4ade80);
-    border: 1px solid rgba(74, 222, 128, 0.5);
-  }
-  .tutor-mascot-flower.l { left: 6%; }
-  .tutor-mascot-flower.r { right: 6%; }
-  .tutor-mascot-gem {
-    position: absolute;
-    left: 50%;
-    bottom: 14%;
-    width: 16%;
-    height: 16%;
-    transform: translateX(-50%) rotate(45deg);
-    border-radius: 4px;
-    background: linear-gradient(135deg, #6ee7b7, #34d399);
-    box-shadow: 0 0 8px rgba(52, 211, 153, 0.55);
-  }
-  .tutor-mascot-wing {
-    position: absolute;
-    top: 34%;
-    width: 28%;
-    height: 34%;
-    border-radius: 60% 40% 60% 40%;
-    background: linear-gradient(135deg, rgba(186, 230, 253, 0.95), rgba(167, 243, 208, 0.75));
-    border: 1px solid rgba(125, 211, 252, 0.5);
-    animation: tutor-wing 1.6s ease-in-out infinite;
-  }
-  .tutor-mascot-wing-l { left: 4%; transform-origin: right center; }
-  .tutor-mascot-wing-r { right: 4%; transform-origin: left center; animation-delay: 0.1s; }
   @keyframes tutor-float {
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(-8px); }
-  }
-  @keyframes tutor-wing {
-    0%, 100% { transform: scaleY(1) rotate(0deg); }
-    50% { transform: scaleY(0.88) rotate(4deg); }
   }
   .tutor-bubble {
     animation: tutor-bubble-in 0.35s ease-out;
   }
   .tutor-bubble-tail {
     position: absolute;
-    right: 36px;
+    right: 42px;
     bottom: -6px;
     width: 10px;
     height: 10px;
