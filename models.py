@@ -129,6 +129,7 @@ class InterviewSession(Base):
     jd_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     resume_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     resume_filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    resume_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     reference_used: Mapped[bool] = mapped_column(nullable=False, default=False)
     reference_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     report_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -254,3 +255,29 @@ class Message(Base):
 
     # 多对一：当前消息归属于一个聊天会话。
     session: Mapped["ChatSession"] = relationship(back_populates="messages")
+
+
+class InviteCode(Base):
+    """注册邀请码：仅管理员可生成，默认 7 天有效，一次性使用。"""
+
+    __tablename__ = "invite_codes"
+
+    id: Mapped[str] = mapped_column(
+        String(50),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    code: Mapped[str] = mapped_column(String(16), unique=True, nullable=False, index=True)
+    created_by: Mapped[str] = mapped_column(
+        String(50),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_by: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

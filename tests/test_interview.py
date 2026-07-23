@@ -386,3 +386,59 @@ def test_build_interview_bank_emits_stages(monkeypatch) -> None:
     assert result["real_questions"][0]["question"] == "真实题1"
     for needed in ("extract", "mcq", "review", "qa", "save", "done"):
         assert needed in stages
+
+
+
+def test_extract_resume_rejects_unsupported_extension() -> None:
+    import pytest
+    from services.interview import extract_resume_text
+
+    with pytest.raises(ValueError, match="仅支持"):
+        extract_resume_text(b"hello", "resume.exe")
+
+
+def test_extract_resume_rejects_too_many_pdf_pages(monkeypatch) -> None:
+    import pytest
+    import pypdf
+    from services import interview
+
+    class FakePage:
+        def extract_text(self):
+            return "hello"
+
+    class FakeReader:
+        def __init__(self, *_a, **_k):
+            self.pages = [FakePage() for _ in range(20)]
+
+    monkeypatch.setattr(pypdf, "PdfReader", FakeReader)
+    monkeypatch.setattr(interview, "RESUME_MAX_PDF_PAGES", 15, raising=False)
+    # extract_resume_text imports RESUME_MAX_PDF_PAGES from settings inside the function
+    import settings
+    monkeypatch.setattr(settings, "RESUME_MAX_PDF_PAGES", 15)
+    with pytest.raises(ValueError, match="页数过多"):
+        interview.extract_resume_text(b"%PDF-1.4", "big.pdf")
+
+
+def test_purge_expired_resume_texts(monkeypatch) -> None:
+    from datetime import datetime, timedelta
+    from services import interview
+
+    class DummyResult:
+        rowcount = 2
+
+    class DummyDB:
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def execute(self, *a, **k):
+            return DummyResult()
+        def commit(self):
+            return None
+
+    import sqlalchemy.orm as sa_orm
+    monkeypatch.setattr(sa_orm, "Session", lambda *a, **k: DummyDB())
+    import database
+    monkeypatch.setattr(database, "engine", object())
+    n = interview.purge_expired_resume_texts(now=datetime.utcnow())
+    assert n == 2

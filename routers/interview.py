@@ -56,14 +56,27 @@ def _parse_reference_blob(raw: Optional[str]) -> tuple[list[dict[str, Any]], lis
     return [], []
 
 
+def _resume_still_valid(session: InterviewSession) -> bool:
+    expires = getattr(session, "resume_expires_at", None)
+    if expires is None:
+        # Legacy rows without expiry: treat as retained until purge backfill.
+        return bool((session.resume_text or "").strip())
+    from datetime import datetime
+
+    return expires > datetime.utcnow() and bool((session.resume_text or "").strip())
+
+
 def _serialize_session(session: InterviewSession, *, with_questions: bool) -> dict[str, Any]:
     sources, real_questions = _parse_reference_blob(getattr(session, "reference_json", None))
+    resume_valid = _resume_still_valid(session)
     data: dict[str, Any] = {
         "id": session.id,
         "company": session.company,
         "position": getattr(session, "position", "") or "",
         "jd_text": session.jd_text,
-        "resume_filename": session.resume_filename,
+        # Never echo full resume on list; detail only if still within retention.
+        "resume_filename": session.resume_filename if resume_valid else None,
+        "resume_retained": resume_valid,
         "reference_used": bool(getattr(session, "reference_used", False)),
         "references": sources,
         "real_questions": real_questions,
@@ -71,7 +84,7 @@ def _serialize_session(session: InterviewSession, *, with_questions: bool) -> di
         "created_at": session.created_at.isoformat() if session.created_at else None,
     }
     if with_questions:
-        data["resume_text"] = session.resume_text
+        data["resume_text"] = session.resume_text if resume_valid else ""
         ordered = sorted(session.questions, key=lambda q: (q.round, q.ordinal))
         data["mcq"] = [
             {**json.loads(q.payload_json), "round": q.round}
@@ -104,10 +117,25 @@ async def _resolve_resume(
         content = await resume_file.read()
         if len(content) > MAX_UPLOAD_BYTES:
             raise HTTPException(status_code=400, detail="简历文件不能超过 5MB")
+        name = (resume_file.filename or "").lower()
+        if not any(name.endswith(ext) for ext in (".pdf", ".docx", ".doc", ".txt")):
+            raise HTTPException(status_code=400, detail="仅支持 PDF / DOCX / TXT 简历")
         try:
-            resolved_resume = await asyncio.to_thread(
-                extract_resume_text, content, resume_file.filename
+            from settings import RESUME_PARSE_TIMEOUT_SECONDS
+
+            timeout = max(3.0, float(RESUME_PARSE_TIMEOUT_SECONDS))
+        except Exception:  # pragma: no cover
+            timeout = 10.0
+        try:
+            resolved_resume = await asyncio.wait_for(
+                asyncio.to_thread(extract_resume_text, content, resume_file.filename),
+                timeout=timeout,
             )
+        except asyncio.TimeoutError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"简历解析超时（>{int(timeout)}s），请换更小的 PDF 或改用文本粘贴",
+            ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         resume_filename = resume_file.filename

@@ -113,6 +113,7 @@ def ensure_interview_columns() -> None:
         "ALTER TABLE interview_sessions ADD COLUMN reference_used BOOL NOT NULL DEFAULT 0",
         "ALTER TABLE interview_sessions ADD COLUMN reference_json TEXT NULL",
         "ALTER TABLE interview_sessions ADD COLUMN report_text TEXT NULL",
+        "ALTER TABLE interview_sessions ADD COLUMN resume_expires_at DATETIME NULL",
         "ALTER TABLE interview_questions ADD COLUMN round INT NOT NULL DEFAULT 1",
     ]
     with engine.begin() as connection:
@@ -126,6 +127,23 @@ def ensure_interview_columns() -> None:
                 if "doesn't exist" in msg or "1146" in msg:
                     return
                 raise
+        # Backfill retention window for legacy rows that still hold resume text.
+        try:
+            import os
+
+            days = max(1, int(os.getenv("RESUME_RETENTION_DAYS", "30")))
+            connection.execute(
+                text(
+                    "UPDATE interview_sessions "
+                    "SET resume_expires_at = DATE_ADD(COALESCE(created_at, UTC_TIMESTAMP()), INTERVAL :days DAY) "
+                    "WHERE resume_expires_at IS NULL "
+                    "AND resume_text IS NOT NULL AND resume_text != ''"
+                ),
+                {"days": days},
+            )
+        except Exception:  # noqa: BLE001
+            # Non-fatal on fresh DBs / dialects without the table yet.
+            pass
 
 
 def ensure_database_exists() -> None:

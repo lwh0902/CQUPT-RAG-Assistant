@@ -61,6 +61,14 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(Base.metadata.create_all, bind=engine)
     await asyncio.to_thread(ensure_session_overflow_columns)
     await asyncio.to_thread(ensure_interview_columns)
+    try:
+        from services.interview import purge_expired_resume_texts
+
+        purged = await asyncio.to_thread(purge_expired_resume_texts)
+        if purged:
+            logging.getLogger(__name__).info("purged expired resume_text on %s sessions", purged)
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning("resume purge skipped", exc_info=True)
     retriever_data, long_term_store = await asyncio.gather(
         asyncio.to_thread(init_rag_system),
         asyncio.to_thread(init_long_term_memory_store),

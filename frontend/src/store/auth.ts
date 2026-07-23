@@ -6,11 +6,13 @@ interface AuthState {
   userId: string | null
   phone: string | null
   isAuthenticated: boolean
+  canManageInvites: boolean
   checkPhone: (phone: string) => Promise<boolean>
   login: (phone: string, password: string) => Promise<void>
-  register: (phone: string, password: string) => Promise<void>
+  register: (phone: string, password: string, inviteCode: string) => Promise<void>
   logout: () => Promise<void>
   restoreSession: () => void
+  refreshCapabilities: () => Promise<void>
 }
 
 function persistAuth(token: string, userId: string, phone: string) {
@@ -25,11 +27,12 @@ function clearPersistedAuth() {
   localStorage.removeItem('phone')
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
+export const useAuthStore = create<AuthState>((set, get) => ({
   token: null,
   userId: null,
   phone: null,
   isAuthenticated: false,
+  canManageInvites: false,
 
   restoreSession: () => {
     const token = localStorage.getItem('token')
@@ -37,6 +40,16 @@ export const useAuthStore = create<AuthState>((set) => ({
     const phone = localStorage.getItem('phone')
     if (token && userId) {
       set({ token, userId, phone, isAuthenticated: true })
+      void get().refreshCapabilities()
+    }
+  },
+
+  refreshCapabilities: async () => {
+    try {
+      const res = await api.get<{ can_manage_invites?: boolean }>('/auth/me')
+      set({ canManageInvites: Boolean(res.data.can_manage_invites) })
+    } catch {
+      set({ canManageInvites: false })
     }
   },
 
@@ -58,9 +71,10 @@ export const useAuthStore = create<AuthState>((set) => ({
     const { user_id } = res.data
     persistAuth(token, user_id, phone)
     set({ token, userId: user_id, phone, isAuthenticated: true })
+    await get().refreshCapabilities()
   },
 
-  register: async (phone: string, password: string) => {
+  register: async (phone: string, password: string, inviteCode: string) => {
     const res = await api.post<{
       token: string
       access_token?: string
@@ -68,11 +82,13 @@ export const useAuthStore = create<AuthState>((set) => ({
     }>('/auth/register', {
       phone,
       password,
+      invite_code: inviteCode,
     })
     const token = res.data.access_token || res.data.token
     const { user_id } = res.data
     persistAuth(token, user_id, phone)
     set({ token, userId: user_id, phone, isAuthenticated: true })
+    await get().refreshCapabilities()
   },
 
   logout: async () => {
@@ -82,6 +98,6 @@ export const useAuthStore = create<AuthState>((set) => ({
       // Clear local state even if the network call fails.
     }
     clearPersistedAuth()
-    set({ token: null, userId: null, phone: null, isAuthenticated: false })
+    set({ token: null, userId: null, phone: null, isAuthenticated: false, canManageInvites: false })
   },
 }))

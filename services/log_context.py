@@ -15,7 +15,10 @@ _session_id: ContextVar[str] = ContextVar("session_id", default="-")
 _PHONE_PATTERN = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
 _BEARER_PATTERN = re.compile(r"(?i)(bearer\s+)[^\s,;]+")
 _SECRET_PATTERN = re.compile(
-    r"(?i)\b(password|token|api[_-]?key|secret|authorization)\b\s*([=:])\s*([^\s,;]+)"
+    r"(?i)\b(password|token|api[_-]?key|secret|authorization|resume[_-]?text|jd[_-]?text|invite[_-]?code)\b\s*([=:])\s*([^\s,;]+)"
+)
+_LONG_PII_PATTERN = re.compile(
+    r"(?i)\b(resume_text|jd_text|spoken_answer)\b\s*([=:])\s*['\"]?.{40,}"
 )
 
 
@@ -68,6 +71,7 @@ class SensitiveDataFilter(logging.Filter):
         message = _PHONE_PATTERN.sub("1**********", message)
         message = _BEARER_PATTERN.sub(r"\1[REDACTED]", message)
         message = _SECRET_PATTERN.sub(r"\1\2[REDACTED]", message)
+        message = _LONG_PII_PATTERN.sub(r"\1\2[REDACTED_PII]", message)
         record.msg = message
         record.args = ()
         return True

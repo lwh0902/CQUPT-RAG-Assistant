@@ -201,3 +201,11 @@ CHUNK_OVERLAP = 80
 
 # Evaluation concurrency.
 MAX_CONCURRENCY = 3
+
+# Registration: only users with a valid invite code may register.
+# This phone can generate invite codes from the account menu (bootstrap admin).
+BOOTSTRAP_ADMIN_PHONE = os.getenv("BOOTSTRAP_ADMIN_PHONE", "18128161378").strip()
+INVITE_CODE_TTL_DAYS = int(os.getenv("INVITE_CODE_TTL_DAYS", "7"))
+RESUME_RETENTION_DAYS = int(os.getenv("RESUME_RETENTION_DAYS", "30"))
+RESUME_PARSE_TIMEOUT_SECONDS = float(os.getenv("RESUME_PARSE_TIMEOUT_SECONDS", "10"))
+RESUME_MAX_PDF_PAGES = int(os.getenv("RESUME_MAX_PDF_PAGES", "15"))
