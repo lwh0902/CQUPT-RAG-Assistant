@@ -25,7 +25,7 @@ export default function LoginPage() {
               </h1>
             </div>
             <p className="mb-6 text-sm text-neutral-400 sm:mb-8">
-              校园智能问答 · 登录后开始对话
+              校园智能问答 · 登录或注册后开始使用
             </p>
             <LoginForm />
           </div>
