@@ -40,7 +40,7 @@ LONG_TERM_MEMORY_DIR = __import__("pathlib").Path("./chroma_memory_db")
 LONG_TERM_MEMORY_COLLECTION = "chat_long_term_memory"
 
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
-API_PORT = int(os.getenv("API_PORT", "8000"))
+API_PORT = int(os.getenv("API_PORT", "8015"))
 API_RELOAD = os.getenv("API_RELOAD", "true").lower() == "true"
 
 
@@ -81,7 +81,7 @@ _raw_cors = os.getenv("CORS_ORIGINS", "")
 if _raw_cors.strip():
     CORS_ORIGINS = [origin.strip() for origin in _raw_cors.split(",") if origin.strip()]
 else:
-    CORS_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    CORS_ORIGINS = ["http://localhost:5074", "http://127.0.0.1:5074"]
 
 app = FastAPI(
     title="重邮极客 AI 大脑",

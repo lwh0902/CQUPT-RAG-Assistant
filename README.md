@@ -98,14 +98,14 @@ python main.py
 ### 4. 启动服务
 
 ```bash
-# 后端 (默认 :8012)
+# 后端 (默认 :8015)
 python api.py
 
-# 前端 (默认 :5173，自动代理到后端)
+# 前端 (默认 :5074，自动代理到后端)
 cd frontend && npm run dev
 ```
 
-访问 http://localhost:5173 即可使用。
+访问 http://localhost:5074 即可使用。
 
 ## Project Structure
 
