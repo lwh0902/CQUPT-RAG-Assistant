@@ -11,6 +11,19 @@ export function buildInterviewMarkdown(session: InterviewSession): string {
     lines.push('')
   }
 
+  const real = session.real_questions ?? []
+  if (real.length > 0) {
+    lines.push(`## 真实面经题（${real.length} 题，无答案）`)
+    lines.push('')
+    real.forEach((item, index) => {
+      lines.push(`${index + 1}. ${item.question}`)
+      if (item.source_title || item.source_url) {
+        lines.push(`   来源：${item.source_title || ''}${item.source_url ? ` ${item.source_url}` : ''}`)
+      }
+    })
+    lines.push('')
+  }
+
   lines.push(`## 一、选择题（${session.mcq.length} 题）`)
   lines.push('')
   session.mcq.forEach((item, index) => {
@@ -28,7 +41,7 @@ export function buildInterviewMarkdown(session: InterviewSession): string {
   session.qa.forEach((item, index) => {
     const category = item.category ? `【${item.category}】` : ''
     lines.push(`${index + 1}. ${category}${item.question}`)
-    lines.push(`   **20s 口语答案：**${item.spoken_answer}`)
+    lines.push(`   **口语答案：**${item.spoken_answer}`)
     lines.push(`   **题目讲解：**${item.analysis}`)
     lines.push('')
   })

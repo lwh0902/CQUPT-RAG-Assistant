@@ -17,18 +17,20 @@ import {
   deleteInterviewSession,
   fetchInterviewSession,
   fetchInterviewSessions,
-  generateInterviewBank,
   regenerateMcq,
+  streamGenerateInterviewBank,
+  type InterviewGenerateStage,
   type InterviewSession,
 } from '../api/client'
 import { buildInterviewMarkdown } from '../components/interview/exportMarkdown'
 import GenerationRunner from '../components/interview/GenerationRunner'
+import InterviewTutor from '../components/interview/InterviewTutor'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useToastStore } from '../store/toast'
 import { useT } from '../i18n'
 
-type Tab = 'mcq' | 'qa'
+type Tab = 'mcq' | 'qa' | 'real'
 
 export default function InterviewPage() {
   const t = useT()
@@ -38,6 +40,7 @@ export default function InterviewPage() {
   const [resumeText, setResumeText] = useState('')
   const [resumeFile, setResumeFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(false)
+  const [genStage, setGenStage] = useState<InterviewGenerateStage | null>(null)
   const [session, setSession] = useState<InterviewSession | null>(null)
   const [history, setHistory] = useState<InterviewSession[]>([])
   const [tab, setTab] = useState<Tab>('mcq')
@@ -67,7 +70,7 @@ export default function InterviewPage() {
     setViewRound(1)
   }
 
-  const handleGenerate = async () => {
+  const handleGenerate = () => {
     if (jdText.trim().length < 10) {
       useToastStore.getState().addToast(t('interview.jdRequired'), 'error')
       return
@@ -78,24 +81,30 @@ export default function InterviewPage() {
     }
     setLoading(true)
     setSession(null)
-    try {
-      const form = new FormData()
-      form.append('company', company.trim())
-      form.append('position', position.trim())
-      form.append('jd_text', jdText.trim())
-      form.append('resume_text', resumeText.trim())
-      if (resumeFile) form.append('resume_file', resumeFile)
-      const result = await generateInterviewBank(form)
-      setSession(result)
-      setTab('mcq')
-      resetQuiz()
-      loadHistory()
-    } catch (err: any) {
-      const detail = err?.response?.data?.detail
-      useToastStore.getState().addToast(detail || t('interview.generateFailed'), 'error')
-    } finally {
-      setLoading(false)
-    }
+    setGenStage({ stage: 'parse', message: t('interview.stageSearch'), progress: 2 })
+    const form = new FormData()
+    form.append('company', company.trim())
+    form.append('position', position.trim())
+    form.append('jd_text', jdText.trim())
+    form.append('resume_text', resumeText.trim())
+    if (resumeFile) form.append('resume_file', resumeFile)
+
+    streamGenerateInterviewBank(form, {
+      onStage: (stage) => setGenStage(stage),
+      onDone: (result) => {
+        setSession(result)
+        setTab(result.real_questions && result.real_questions.length > 0 ? 'real' : 'mcq')
+        resetQuiz()
+        loadHistory()
+        setLoading(false)
+        setGenStage(null)
+      },
+      onError: (message) => {
+        useToastStore.getState().addToast(message || t('interview.generateFailed'), 'error')
+        setLoading(false)
+        setGenStage(null)
+      },
+    })
   }
 
   const handleExport = () => {
@@ -319,7 +328,7 @@ export default function InterviewPage() {
                 {loading && <Loader2 className="h-4 w-4 animate-spin" />}
                 {loading ? t('interview.generating') : t('interview.generate')}
               </button>
-              {loading && <GenerationRunner />}
+              {loading && <GenerationRunner stage={genStage} />}
             </div>
 
             {history.length > 0 && (
@@ -363,8 +372,11 @@ export default function InterviewPage() {
               </div>
             </div>
 
-            <div className="mb-4 flex gap-2">
-              {(['mcq', 'qa'] as Tab[]).map((key) => (
+            <div className="mb-4 flex flex-wrap gap-2">
+              {((session.real_questions && session.real_questions.length > 0
+                  ? (['real', 'mcq', 'qa'] as Tab[])
+                  : (['mcq', 'qa'] as Tab[])
+                )).map((key) => (
                 <button
                   key={key}
                   type="button"
@@ -375,7 +387,11 @@ export default function InterviewPage() {
                       : 'border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'
                   }`}
                 >
-                  {key === 'mcq' ? t('interview.mcqTab') : t('interview.qaTab')}
+                  {key === 'mcq'
+                    ? t('interview.mcqTab')
+                    : key === 'qa'
+                      ? t('interview.qaTab')
+                      : `${t('interview.tabReal')}${session.real_questions?.length ? `（${session.real_questions.length}）` : ''}`}
                 </button>
               ))}
               {tab === 'mcq' && mcqRounds.length > 1 && (
@@ -397,6 +413,45 @@ export default function InterviewPage() {
                 </div>
               )}
             </div>
+
+            {tab === 'real' && (
+              <div className="space-y-3">
+                <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)]/80 p-4">
+                  <p className="mb-1 text-sm font-medium">{t('interview.realQuestions')}</p>
+                  <p className="text-xs text-[var(--text-tertiary)]">{t('interview.realQuestionsHint')}</p>
+                </div>
+                {(session.real_questions ?? []).length === 0 ? (
+                  <p className="text-sm text-[var(--text-tertiary)]">{t('interview.realQuestionsEmpty')}</p>
+                ) : (
+                  <ol className="space-y-2">
+                    {(session.real_questions ?? []).map((item, index) => (
+                      <li key={index} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)]/80 p-4">
+                        <p className="text-sm font-medium text-[var(--text-primary)]">
+                          {index + 1}. {item.question}
+                        </p>
+                        {(item.source_title || item.source_url) && (
+                          <p className="mt-2 text-[11px] text-[var(--text-tertiary)]">
+                            {t('interview.source')}：
+                            {item.source_url ? (
+                              <a
+                                href={item.source_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[var(--accent)] hover:underline"
+                              >
+                                {item.source_title || item.source_url}
+                              </a>
+                            ) : (
+                              item.source_title
+                            )}
+                          </p>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+            )}
 
             {tab === 'mcq' && (
               <div className="space-y-4">
@@ -538,6 +593,7 @@ export default function InterviewPage() {
           </div>
         )}
       </main>
+      <InterviewTutor />
     </div>
   )
 }

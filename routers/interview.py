@@ -1,14 +1,15 @@
-"""Interview assistant routes: generate / list / detail / delete question banks."""
+"""Interview assistant routes: generate (SSE) / list / detail / delete / tutor."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-import uuid
-from typing import Any, Optional
+import queue
+from typing import Any, AsyncIterator, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
@@ -17,15 +18,15 @@ from database import engine
 from models import InterviewQuestion, InterviewSession, User
 from security import get_current_user
 from services.interview import (
+    MAX_JD_CHARS,
+    MAX_RESUME_CHARS,
+    build_interview_bank,
     clamp_text,
     extract_resume_text,
-    generate_mcq_bank,
-    generate_qa_bank,
     generate_targeted_mcq_bank,
     generate_weakness_report,
     search_interview_references,
-    MAX_JD_CHARS,
-    MAX_RESUME_CHARS,
+    stream_interview_tutor,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,29 @@ router = APIRouter(prefix="/interview", tags=["interview"])
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 
 
+def _parse_reference_blob(raw: Optional[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Support both legacy list refs and v3 {sources, real_questions} blob."""
+    if not raw:
+        return [], []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return [], []
+    if isinstance(data, list):
+        return data, []
+    if isinstance(data, dict):
+        sources = data.get("sources") or []
+        real_questions = data.get("real_questions") or []
+        if not isinstance(sources, list):
+            sources = []
+        if not isinstance(real_questions, list):
+            real_questions = []
+        return sources, real_questions
+    return [], []
+
+
 def _serialize_session(session: InterviewSession, *, with_questions: bool) -> dict[str, Any]:
+    sources, real_questions = _parse_reference_blob(getattr(session, "reference_json", None))
     data: dict[str, Any] = {
         "id": session.id,
         "company": session.company,
@@ -42,7 +65,8 @@ def _serialize_session(session: InterviewSession, *, with_questions: bool) -> di
         "jd_text": session.jd_text,
         "resume_filename": session.resume_filename,
         "reference_used": bool(getattr(session, "reference_used", False)),
-        "references": json.loads(session.reference_json) if getattr(session, "reference_json", None) else [],
+        "references": sources,
+        "real_questions": real_questions,
         "report_text": getattr(session, "report_text", None),
         "created_at": session.created_at.isoformat() if session.created_at else None,
     }
@@ -65,19 +89,15 @@ def _serialize_session(session: InterviewSession, *, with_questions: bool) -> di
     return data
 
 
-@router.post("/generate")
-async def generate_interview_bank(
-    company: str = Form(default=""),
-    position: str = Form(default=""),
-    jd_text: str = Form(...),
-    resume_text: str = Form(default=""),
-    resume_file: Optional[UploadFile] = File(default=None),
-    current_user: User = Depends(get_current_user),
-) -> dict[str, Any]:
-    jd_text = (jd_text or "").strip()
-    if len(jd_text) < 10:
-        raise HTTPException(status_code=400, detail="岗位 JD 至少需要 10 个字符")
+def _sse(event: str, payload: dict[str, Any]) -> str:
+    body = json.dumps(payload, ensure_ascii=False)
+    return f"event: {event}\ndata: {body}\n\n"
 
+
+async def _resolve_resume(
+    resume_text: str,
+    resume_file: Optional[UploadFile],
+) -> tuple[str, Optional[str]]:
     resolved_resume = (resume_text or "").strip()
     resume_filename: Optional[str] = None
     if resume_file is not None and resume_file.filename:
@@ -94,77 +114,153 @@ async def generate_interview_bank(
 
     if len(resolved_resume) < 20:
         raise HTTPException(status_code=400, detail="请上传简历 PDF/DOCX 或粘贴简历文本（至少 20 个字符）")
+    return clamp_text(resolved_resume, MAX_RESUME_CHARS), resume_filename
 
-    resolved_resume = clamp_text(resolved_resume, MAX_RESUME_CHARS)
-    jd_text = clamp_text(jd_text, MAX_JD_CHARS)
 
-    # 面经参考：联网搜索真实面试经验；无 key/无结果时自动纯模型生成。
+@router.post("/generate")
+async def generate_interview_bank(
+    company: str = Form(default=""),
+    position: str = Form(default=""),
+    jd_text: str = Form(...),
+    resume_text: str = Form(default=""),
+    resume_file: Optional[UploadFile] = File(default=None),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Legacy non-stream generate (kept for compatibility / simple clients)."""
+    jd_text = clamp_text((jd_text or "").strip(), MAX_JD_CHARS)
+    if len(jd_text) < 10:
+        raise HTTPException(status_code=400, detail="岗位 JD 至少需要 10 个字符")
+
+    resolved_resume, resume_filename = await _resolve_resume(resume_text, resume_file)
     references_text, references = await search_interview_references(company, position)
 
     try:
-        from settings import INTERVIEW_MCQ_REVIEW
-
-        mcq_raw, qa = await asyncio.gather(
-            asyncio.to_thread(
-                generate_mcq_bank,
-                company=company,
-                position=position,
-                jd_text=jd_text,
-                resume_text=resolved_resume,
-                references=references_text,
-            ),
-            asyncio.to_thread(
-                generate_qa_bank,
-                company=company,
-                position=position,
-                jd_text=jd_text,
-                resume_text=resolved_resume,
-                references=references_text,
-            ),
-        )
-        # Second-pass review: drop/fix questions with wrong answer keys.
-        from services.interview import review_mcq_bank
-
-        mcq = await asyncio.to_thread(review_mcq_bank, mcq_raw, enabled=INTERVIEW_MCQ_REVIEW)
-    except ValueError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    with Session(engine) as db:
-        session = InterviewSession(
-            id=str(uuid.uuid4()),
-            user_id=current_user.id,
-            company=(company or "").strip()[:100],
-            position=(position or "").strip()[:100],
+        result = await asyncio.to_thread(
+            build_interview_bank,
+            company=company,
+            position=position,
             jd_text=jd_text,
             resume_text=resolved_resume,
             resume_filename=resume_filename,
-            reference_used=bool(references),
-            reference_json=json.dumps(references, ensure_ascii=False) if references else None,
+            user_id=current_user.id,
+            references_text=references_text,
+            references=references,
         )
-        db.add(session)
-        for ordinal, item in enumerate(mcq, start=1):
-            db.add(
-                InterviewQuestion(
-                    session_id=session.id,
-                    qtype="mcq",
-                    ordinal=ordinal,
-                    round=1,
-                    payload_json=json.dumps(item, ensure_ascii=False),
-                )
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return result
+
+
+@router.post("/generate/stream")
+async def generate_interview_bank_stream(
+    company: str = Form(default=""),
+    position: str = Form(default=""),
+    jd_text: str = Form(...),
+    resume_text: str = Form(default=""),
+    resume_file: Optional[UploadFile] = File(default=None),
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """SSE generate with real stage events."""
+    jd_text = clamp_text((jd_text or "").strip(), MAX_JD_CHARS)
+    if len(jd_text) < 10:
+        raise HTTPException(status_code=400, detail="岗位 JD 至少需要 10 个字符")
+
+    resolved_resume, resume_filename = await _resolve_resume(resume_text, resume_file)
+    user_id = current_user.id
+
+    async def event_stream() -> AsyncIterator[str]:
+        yield _sse("stage", {"stage": "parse", "message": "正在解析简历与岗位信息…", "progress": 4})
+
+        yield _sse("stage", {"stage": "search", "message": "正在联网搜索真实面经…", "progress": 12})
+        try:
+            references_text, references = await search_interview_references(company, position)
+        except Exception:
+            logger.warning("stream search failed", exc_info=True)
+            references_text, references = "", []
+
+        if references:
+            yield _sse(
+                "stage",
+                {
+                    "stage": "search",
+                    "message": f"已找到 {len(references)} 条面经来源，开始提炼真题…",
+                    "progress": 18,
+                    "ref_count": len(references),
+                },
             )
-        for ordinal, item in enumerate(qa, start=1):
-            db.add(
-                InterviewQuestion(
-                    session_id=session.id,
-                    qtype="qa",
-                    ordinal=ordinal,
-                    round=1,
-                    payload_json=json.dumps(item, ensure_ascii=False),
-                )
+        else:
+            yield _sse(
+                "stage",
+                {
+                    "stage": "search",
+                    "message": "未启用联网或未搜到面经，将纯模型出题…",
+                    "progress": 18,
+                    "ref_count": 0,
+                },
             )
-        db.commit()
-        db.refresh(session)
-        return _serialize_session(session, with_questions=True)
+
+        loop = asyncio.get_running_loop()
+        stage_q: queue.Queue[tuple[str, dict[str, Any]] | None] = queue.Queue()
+
+        def on_stage(key: str, message: str, progress: int, extra: dict[str, Any]) -> None:
+            payload = {"stage": key, "message": message, "progress": progress, **(extra or {})}
+            stage_q.put(("stage", payload))
+
+        def worker() -> None:
+            try:
+                result = build_interview_bank(
+                    company=company,
+                    position=position,
+                    jd_text=jd_text,
+                    resume_text=resolved_resume,
+                    resume_filename=resume_filename,
+                    user_id=user_id,
+                    references_text=references_text,
+                    references=references,
+                    on_stage=on_stage,
+                )
+                stage_q.put(("done", result))
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("interview stream generate failed")
+                stage_q.put(("error", {"detail": str(exc) or "题库生成失败"}))
+            finally:
+                stage_q.put(None)
+
+        await loop.run_in_executor(None, lambda: None)  # warm default executor
+        fut = loop.run_in_executor(None, worker)
+
+        while True:
+            item = await asyncio.to_thread(stage_q.get)
+            if item is None:
+                break
+            event, payload = item
+            if event == "stage":
+                # Interpolate QA chunk progress 58→88
+                if payload.get("stage") == "qa" and payload.get("total_chunks"):
+                    chunk = int(payload.get("chunk") or 1)
+                    total = max(1, int(payload.get("total_chunks") or 1))
+                    payload["progress"] = 58 + int(30 * chunk / total)
+                yield _sse("stage", payload)
+            elif event == "done":
+                yield _sse("done", payload)
+            elif event == "error":
+                yield _sse("error", payload)
+
+        # Surface unexpected worker crash if queue ended without done/error
+        try:
+            await fut
+        except Exception:
+            logger.exception("interview generate worker crashed")
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/sessions")
@@ -211,9 +307,22 @@ class WrongAnswersPayload(BaseModel):
     wrong_indices: list[int] = Field(default_factory=list, max_length=60)
 
 
+class TutorMessage(BaseModel):
+    role: str
+    content: str = Field(min_length=1, max_length=4000)
+
+
+class TutorPayload(BaseModel):
+    messages: list[TutorMessage] = Field(min_length=1, max_length=20)
+
+
 def _load_round1_mcq(session: InterviewSession, wrong_indices: list[int]) -> list[dict[str, Any]]:
-    """Resolve wrong MCQ items (round 1) by 1-based indices; empty list = all wrong handled by caller."""
-    round1 = [q for q in sorted(session.questions, key=lambda q: (q.round, q.ordinal)) if q.qtype == "mcq" and q.round == 1]
+    """Resolve wrong MCQ items (round 1) by 1-based indices."""
+    round1 = [
+        q
+        for q in sorted(session.questions, key=lambda q: (q.round, q.ordinal))
+        if q.qtype == "mcq" and q.round == 1
+    ]
     items: list[dict[str, Any]] = []
     for index in wrong_indices:
         if 1 <= index <= len(round1):
@@ -270,6 +379,7 @@ async def regenerate_targeted_mcq(
 
         try:
             from settings import INTERVIEW_MCQ_REVIEW
+            from services.interview import review_mcq_bank
 
             items_raw = await asyncio.to_thread(
                 generate_targeted_mcq_bank,
@@ -280,8 +390,6 @@ async def regenerate_targeted_mcq(
                 weak_points=weak_points_source,
                 count=10,
             )
-            from services.interview import review_mcq_bank
-
             items = await asyncio.to_thread(review_mcq_bank, items_raw, enabled=INTERVIEW_MCQ_REVIEW)
         except ValueError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -304,3 +412,38 @@ async def regenerate_targeted_mcq(
             "round": next_round,
             "mcq": items,
         }
+
+
+@router.post("/tutor/stream")
+async def interview_tutor_stream(
+    payload: TutorPayload,
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """Lightweight knowledge tutor for the interview page (no auto question context)."""
+    _ = current_user
+    messages = [{"role": m.role, "content": m.content} for m in payload.messages]
+
+    async def event_stream() -> AsyncIterator[str]:
+        try:
+            async for event_type, content in stream_interview_tutor(messages):
+                if event_type == "token":
+                    yield _sse("token", {"content": content})
+                elif event_type == "error":
+                    yield _sse("error", {"detail": content or "讲解失败"})
+                elif event_type == "done":
+                    yield _sse("done", {})
+        except ValueError as exc:
+            yield _sse("error", {"detail": str(exc)})
+        except Exception:
+            logger.exception("interview tutor failed")
+            yield _sse("error", {"detail": "讲解失败，请重试"})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

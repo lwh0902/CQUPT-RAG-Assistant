@@ -320,25 +320,28 @@ def generate_mcq_bank(*, company: str, position: str = "", jd_text: str, resume_
     return _generate_bank(prompt, McqBank, count)
 
 
-def generate_qa_bank(*, company: str, position: str = "", jd_text: str, resume_text: str, references: str = "", count: int = 30) -> list[dict[str, Any]]:
+def generate_qa_bank(
+    *,
+    company: str,
+    position: str = "",
+    jd_text: str,
+    resume_text: str,
+    references: str = "",
+    count: int = 30,
+    on_chunk: Any = None,
+) -> list[dict[str, Any]]:
     """Generate the QA bank in chunks: 30 long-form items exceed the model's
-    output budget in one call (truncated JSON = unterminated string)."""
-    chunk_size = 15
-    if count <= chunk_size:
-        prompt = _QA_PROMPT.format(
-            count=count,
-            company=company or "未指定",
-            position=position or "未指定",
-            jd=clamp_text(jd_text, MAX_JD_CHARS),
-            resume=clamp_text(resume_text, MAX_RESUME_CHARS),
-            references_block=_references_block(references),
-        )
-        return _generate_bank(prompt, QaBank, count)
+    output budget in one call (truncated JSON = unterminated string).
 
-    merged: list[dict[str, Any]] = []
-    remaining = count
-    while remaining > 0:
-        chunk = min(chunk_size, remaining)
+    on_chunk(index_1based, total_chunks) is invoked before each chunk call so
+    SSE progress can surface real stage text.
+    """
+    chunk_size = 15
+    total_chunks = max(1, (count + chunk_size - 1) // chunk_size)
+
+    def _one(chunk: int, chunk_index: int) -> list[dict[str, Any]]:
+        if on_chunk is not None:
+            on_chunk(chunk_index, total_chunks)
         prompt = _QA_PROMPT.format(
             count=chunk,
             company=company or "未指定",
@@ -347,7 +350,18 @@ def generate_qa_bank(*, company: str, position: str = "", jd_text: str, resume_t
             resume=clamp_text(resume_text, MAX_RESUME_CHARS),
             references_block=_references_block(references),
         )
-        merged.extend(_generate_bank(prompt, QaBank, chunk))
+        return _generate_bank(prompt, QaBank, chunk)
+
+    if count <= chunk_size:
+        return _one(count, 1)
+
+    merged: list[dict[str, Any]] = []
+    remaining = count
+    chunk_index = 0
+    while remaining > 0:
+        chunk = min(chunk_size, remaining)
+        chunk_index += 1
+        merged.extend(_one(chunk, chunk_index))
         remaining -= chunk
     # Deduplicate near-identical questions across chunks.
     seen: set[str] = set()
@@ -391,10 +405,11 @@ def generate_weakness_report(wrong_items: list[dict[str, Any]]) -> str:
 # Interview-reference web search (面经)
 # ---------------------------------------------------------------------------
 
-async def search_interview_references(company: str, position: str, *, limit: int = 4) -> tuple[str, list[dict[str, Any]]]:
+async def search_interview_references(company: str, position: str, *, limit: int = 6) -> tuple[str, list[dict[str, Any]]]:
     """Search the web for interview experiences (面经) for company+position.
 
     Graceful fallback: returns ("", []) when no search provider is configured.
+    Each ref: {title, url, snippet}.
     """
     company = (company or "").strip()
     position = (position or "").strip()
@@ -413,16 +428,118 @@ async def search_interview_references(company: str, position: str, *, limit: int
     snippets: list[str] = []
     refs: list[dict[str, Any]] = []
     for index, source in enumerate(sources[:limit], start=1):
-        snippet = " ".join((source.snippet or "").split())[:300]
+        snippet = " ".join((source.snippet or "").split())[:400]
         title = (source.title or "").strip()
         url = (source.url or "").strip()
-        if not snippet:
+        if not snippet and not title:
             continue
         snippets.append(f"[{index}] {title}\n{snippet}")
-        refs.append({"title": title, "url": url})
+        refs.append({"title": title, "url": url, "snippet": snippet})
     if not snippets:
         return "", []
     return "\n\n".join(snippets), refs
+
+
+_EXTRACT_REAL_QUESTIONS_PROMPT = """你是面试题整理助手。根据下面【面经搜索结果】，提炼最多 {limit} 道真实面试题题干。
+
+规则：
+1. 只输出题干，不要答案、不要解析；
+2. 优先技术题 / 项目题 / 场景题；过滤广告、灌水、纯吐槽；
+3. 题干简洁完整，像候选人可能被问到的原话；
+4. 去重；不够就少出，不要编造搜索结果里没有的题；
+5. 严格 JSON：{{"questions":[{{"question":"...","source_index":1}}]}}
+   source_index 对应面经条目编号（从 1 起），不确定就填 1。
+
+【目标公司】{company}
+【目标岗位】{position}
+【面经搜索结果】
+{references}
+"""
+
+
+class RealQuestionItem(BaseModel):
+    question: str = Field(min_length=4, max_length=300)
+    source_index: int = Field(default=1, ge=1, le=20)
+
+
+class RealQuestionBank(BaseModel):
+    questions: list[RealQuestionItem]
+
+
+def extract_real_interview_questions(
+    *,
+    company: str,
+    position: str,
+    references_text: str,
+    references: list[dict[str, Any]],
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Turn raw 面经 snippets into a transparent list of real interview questions (no answers)."""
+    references_text = (references_text or "").strip()
+    if not references_text:
+        return []
+    prompt = _EXTRACT_REAL_QUESTIONS_PROMPT.format(
+        limit=limit,
+        company=company or "未指定",
+        position=position or "未指定",
+        references=clamp_text(references_text, 6000),
+    )
+    try:
+        raw = _strip_json_fence(_call_llm_json(prompt, max_tokens=4000))
+        payload = RealQuestionBank.model_validate(json.loads(raw))
+    except Exception:
+        logger.warning("extract real interview questions failed", exc_info=True)
+        return []
+
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in payload.questions:
+        q = (item.question or "").strip()
+        key = re.sub(r"\W+", "", q)[:40]
+        if not q or key in seen:
+            continue
+        seen.add(key)
+        src = references[item.source_index - 1] if 1 <= item.source_index <= len(references) else (references[0] if references else {})
+        out.append(
+            {
+                "question": q,
+                "source_title": (src or {}).get("title") or "",
+                "source_url": (src or {}).get("url") or "",
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
+_TUTOR_SYSTEM = """你是「面试小助教」，待在面试助手页面里帮用户解惑。
+
+风格：
+- 用大白话 + 必要的专业术语，把知识点讲明白；
+- 先给结论，再给 2-4 个要点，必要时举一个短例子；
+- 不要长篇八股，不要堆砌清单；中文回答，简洁有用；
+- 用户可能会粘贴面试题或某个概念，直接针对内容讲解；
+- 不要主动要求用户提供简历/JD，除非对方主动提到。
+"""
+
+
+async def stream_interview_tutor(messages: list[dict[str, str]]):
+    """Stream a lightweight tutor reply (no tools, no RAG, no auto question context)."""
+    from services.llm import stream_llm_text
+
+    cleaned: list[dict[str, str]] = []
+    for msg in messages[-12:]:
+        role = msg.get("role")
+        content = (msg.get("content") or "").strip()
+        if role in {"user", "assistant"} and content:
+            cleaned.append({"role": role, "content": content[:2000]})
+    if not cleaned or cleaned[-1]["role"] != "user":
+        raise ValueError("请先输入你想问的问题")
+
+    full = [{"role": "system", "content": _TUTOR_SYSTEM}, *cleaned]
+    async for content in stream_llm_text(full, temperature=0.5):
+        yield "token", content
+    yield "done", ""
 
 
 def _references_block(references: str) -> str:
@@ -430,3 +547,142 @@ def _references_block(references: str) -> str:
     if not references:
         return ""
     return f"\n【面经参考】（来自联网搜索的真实面试经验，出题时优先参考其中的高频考点）\n{references}\n"
+
+
+# ---------------------------------------------------------------------------
+# Full bank generation with progress callbacks (for SSE)
+# ---------------------------------------------------------------------------
+
+STAGE_PROGRESS = {
+    "parse": 4,
+    "search": 12,
+    "extract": 22,
+    "mcq": 45,
+    "review": 58,
+    "qa": 88,
+    "save": 96,
+    "done": 100,
+}
+
+
+def build_interview_bank(
+    *,
+    company: str,
+    position: str,
+    jd_text: str,
+    resume_text: str,
+    resume_filename: str | None,
+    user_id: str,
+    references_text: str,
+    references: list[dict[str, Any]],
+    on_stage: Any = None,
+) -> dict[str, Any]:
+    """Synchronous bank build used by the SSE generator endpoint."""
+    import uuid
+
+    from database import engine
+    from models import InterviewQuestion, InterviewSession
+    from settings import INTERVIEW_MCQ_REVIEW
+    from sqlalchemy.orm import Session as DbSession
+
+    def stage(key: str, message: str, **extra: Any) -> None:
+        if on_stage is not None:
+            on_stage(key, message, STAGE_PROGRESS.get(key, 0), extra)
+
+    stage("extract", "正在从面经里提炼真实面试题…" if references else "未搜到面经，跳过真题提炼…")
+    real_questions = extract_real_interview_questions(
+        company=company,
+        position=position,
+        references_text=references_text,
+        references=references,
+        limit=20,
+    ) if references_text else []
+
+    stage("mcq", "正在结合 JD 与简历设计选择题…")
+    mcq_raw = generate_mcq_bank(
+        company=company,
+        position=position,
+        jd_text=jd_text,
+        resume_text=resume_text,
+        references=references_text,
+    )
+
+    stage("review", "正在质检选择题答案…")
+    mcq = review_mcq_bank(mcq_raw, enabled=INTERVIEW_MCQ_REVIEW)
+
+    def on_qa_chunk(index: int, total: int) -> None:
+        stage(
+            "qa",
+            f"正在撰写简答题（第 {index}/{total} 批）…",
+            chunk=index,
+            total_chunks=total,
+        )
+
+    qa = generate_qa_bank(
+        company=company,
+        position=position,
+        jd_text=jd_text,
+        resume_text=resume_text,
+        references=references_text,
+        on_chunk=on_qa_chunk,
+    )
+
+    stage("save", "正在保存题库…")
+    with DbSession(engine) as db:
+        session = InterviewSession(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            company=(company or "").strip()[:100],
+            position=(position or "").strip()[:100],
+            jd_text=jd_text,
+            resume_text=resume_text,
+            resume_filename=resume_filename,
+            reference_used=bool(references),
+            reference_json=json.dumps(
+                {"sources": references, "real_questions": real_questions},
+                ensure_ascii=False,
+            )
+            if (references or real_questions)
+            else None,
+        )
+        db.add(session)
+        for ordinal, item in enumerate(mcq, start=1):
+            db.add(
+                InterviewQuestion(
+                    session_id=session.id,
+                    qtype="mcq",
+                    ordinal=ordinal,
+                    round=1,
+                    payload_json=json.dumps(item, ensure_ascii=False),
+                )
+            )
+        for ordinal, item in enumerate(qa, start=1):
+            db.add(
+                InterviewQuestion(
+                    session_id=session.id,
+                    qtype="qa",
+                    ordinal=ordinal,
+                    round=1,
+                    payload_json=json.dumps(item, ensure_ascii=False),
+                )
+            )
+        db.commit()
+        db.refresh(session)
+
+        data = {
+            "id": session.id,
+            "company": session.company,
+            "position": getattr(session, "position", "") or "",
+            "jd_text": session.jd_text,
+            "resume_text": session.resume_text,
+            "resume_filename": session.resume_filename,
+            "reference_used": bool(getattr(session, "reference_used", False)),
+            "references": references,
+            "real_questions": real_questions,
+            "report_text": None,
+            "created_at": session.created_at.isoformat() if session.created_at else None,
+            "mcq": [{**item, "round": 1} for item in mcq],
+            "qa": qa,
+        }
+    stage("done", "题库生成完成", session_id=data["id"])
+    return data

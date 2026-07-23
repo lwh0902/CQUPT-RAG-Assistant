@@ -234,3 +234,155 @@ def test_generate_qa_bank_chunks_long_requests(monkeypatch) -> None:
     items = interview.generate_qa_bank(company="", jd_text="后端", resume_text="Python")
     assert calls["n"] == 2  # 30 题分两批
     assert len(items) == 15  # 两批同构 mock 去重后剩 15
+
+
+
+def test_extract_real_interview_questions(monkeypatch) -> None:
+    payload = json.dumps(
+        {
+            "questions": [
+                {"question": "讲讲 MySQL 索引失效的场景", "source_index": 1},
+                {"question": "Python GIL 对多线程的影响", "source_index": 1},
+                {"question": "讲讲 MySQL 索引失效的场景", "source_index": 1},
+            ]
+        },
+        ensure_ascii=False,
+    )
+    monkeypatch.setattr(interview, "_call_llm_json", lambda prompt, max_tokens=4000: payload)
+    refs = [{"title": "百度后端面经", "url": "https://example.com/1", "snippet": "..."}]
+    items = interview.extract_real_interview_questions(
+        company="百度",
+        position="后端",
+        references_text="[1] 百度后端面经\n问了索引和 GIL",
+        references=refs,
+        limit=20,
+    )
+    assert len(items) == 2
+    assert items[0]["source_title"] == "百度后端面经"
+    assert items[0]["source_url"].startswith("https://")
+
+
+def test_extract_real_interview_questions_empty_without_refs() -> None:
+    assert interview.extract_real_interview_questions(
+        company="x", position="y", references_text="", references=[], limit=20
+    ) == []
+
+
+def test_generate_qa_bank_on_chunk_callback(monkeypatch) -> None:
+    calls = []
+
+    def fake(prompt):
+        return _valid_qa_payload(count=15)
+
+    monkeypatch.setattr(interview, "_call_llm_json", fake)
+    interview.generate_qa_bank(
+        company="",
+        jd_text="后端",
+        resume_text="Python",
+        count=30,
+        on_chunk=lambda i, total: calls.append((i, total)),
+    )
+    assert calls == [(1, 2), (2, 2)]
+
+
+
+def test_build_interview_bank_emits_stages(monkeypatch) -> None:
+    stages: list[str] = []
+
+    monkeypatch.setattr(
+        interview,
+        "extract_real_interview_questions",
+        lambda **kwargs: [{"question": "真实题1", "source_title": "s", "source_url": "u"}],
+    )
+    monkeypatch.setattr(
+        interview,
+        "generate_mcq_bank",
+        lambda **kwargs: [
+            {
+                "question": f"Q{i}",
+                "options": {"A": "1", "B": "2", "C": "3", "D": "4"},
+                "answer": "A",
+                "analysis": "analysis text here",
+            }
+            for i in range(10)
+        ],
+    )
+    monkeypatch.setattr(interview, "review_mcq_bank", lambda items, enabled=True: items)
+
+    def fake_qa(**kwargs):
+        on_chunk = kwargs.get("on_chunk")
+        if on_chunk:
+            on_chunk(1, 1)
+        return [
+            {
+                "question": f"简答{i}",
+                "category": "基础概念",
+                "spoken_answer": "口语答案内容足够长一些",
+                "analysis": "题目讲解内容足够长一些文字",
+            }
+            for i in range(8)
+        ]
+
+    monkeypatch.setattr(interview, "generate_qa_bank", fake_qa)
+
+    class DummySession:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+            from datetime import datetime
+
+            self.created_at = datetime.utcnow()
+            self.questions = []
+
+    class DummyQuestion:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    class DummyDB:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def add(self, obj):
+            return None
+
+        def commit(self):
+            return None
+
+        def refresh(self, obj):
+            return None
+
+    import models
+    import database
+
+    monkeypatch.setattr(models, "InterviewSession", DummySession)
+    monkeypatch.setattr(models, "InterviewQuestion", DummyQuestion)
+    monkeypatch.setattr(database, "engine", object())
+
+    # build_interview_bank does: from sqlalchemy.orm import Session as DbSession
+    import sqlalchemy.orm as sa_orm
+
+    monkeypatch.setattr(sa_orm, "Session", DummyDB)
+
+    result = interview.build_interview_bank(
+        company="百度",
+        position="后端",
+        jd_text="JD content enough",
+        resume_text="简历内容足够长" * 5,
+        resume_filename=None,
+        user_id="u1",
+        references_text="ref text",
+        references=[{"title": "t", "url": "u", "snippet": "s"}],
+        on_stage=lambda key, msg, prog, extra: stages.append(key),
+    )
+    assert len(result["mcq"]) == 10
+    assert len(result["qa"]) == 8
+    assert result["real_questions"][0]["question"] == "真实题1"
+    for needed in ("extract", "mcq", "review", "qa", "save", "done"):
+        assert needed in stages

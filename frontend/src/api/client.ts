@@ -233,6 +233,13 @@ export interface QaItem {
 export interface InterviewReference {
   title: string
   url: string
+  snippet?: string
+}
+
+export interface RealInterviewQuestion {
+  question: string
+  source_title?: string
+  source_url?: string
 }
 
 export interface InterviewSession {
@@ -244,6 +251,7 @@ export interface InterviewSession {
   resume_filename?: string | null
   reference_used?: boolean
   references?: InterviewReference[]
+  real_questions?: RealInterviewQuestion[]
   report_text?: string | null
   created_at?: string
   mcq: McqItem[]
@@ -252,12 +260,204 @@ export interface InterviewSession {
   qa_count?: number
 }
 
+export interface InterviewGenerateStage {
+  stage: string
+  message: string
+  progress: number
+  ref_count?: number
+  chunk?: number
+  total_chunks?: number
+}
+
 export async function generateInterviewBank(form: FormData): Promise<InterviewSession> {
   const { data } = await api.post<InterviewSession>('/interview/generate', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 180000,
+    timeout: 300000,
   })
   return data
+}
+
+export type InterviewGenerateHandlers = {
+  onStage?: (stage: InterviewGenerateStage) => void
+  onDone?: (session: InterviewSession) => void
+  onError?: (message: string) => void
+}
+
+export function streamGenerateInterviewBank(
+  form: FormData,
+  handlers: InterviewGenerateHandlers,
+): { abort: () => void } {
+  const controller = new AbortController()
+
+  void (async () => {
+    try {
+      const headers: Record<string, string> = {
+        Accept: 'text/event-stream',
+      }
+      const token = localStorage.getItem('token')
+      if (token) headers.Authorization = `Bearer ${token}`
+      const csrf = readCookie(CSRF_COOKIE_NAME)
+      if (csrf) headers[CSRF_HEADER_NAME] = csrf
+
+      const response = await fetch('/api/interview/generate/stream', {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: form,
+        signal: controller.signal,
+      })
+
+      if (!response.ok) {
+        let message = `请求失败（${response.status}）`
+        try {
+          const payload = await response.json()
+          if (typeof payload?.detail === 'string') message = payload.detail
+        } catch {
+          /* ignore */
+        }
+        if (response.status === 401) {
+          localStorage.removeItem('token')
+          window.location.href = '/login'
+        }
+        throw new Error(message)
+      }
+      if (!response.body) throw new Error('浏览器不支持流式响应')
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buffer = ''
+      let currentEvent = 'message'
+      let finished = false
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const parts = buffer.split('\n\n')
+        buffer = parts.pop() ?? ''
+        for (const part of parts) {
+          const lines = part.split('\n')
+          let eventName = currentEvent
+          const dataLines: string[] = []
+          for (const line of lines) {
+            if (line.startsWith('event:')) eventName = line.slice(6).trim()
+            else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
+          }
+          if (!dataLines.length) continue
+          const raw = dataLines.join('\n')
+          let payload: any = {}
+          try {
+            payload = JSON.parse(raw)
+          } catch {
+            payload = { detail: raw }
+          }
+          if (eventName === 'stage') handlers.onStage?.(payload as InterviewGenerateStage)
+          else if (eventName === 'done') {
+            finished = true
+            const session = {
+              ...payload,
+              mcq: payload.mcq ?? [],
+              qa: payload.qa ?? [],
+              references: payload.references ?? [],
+              real_questions: payload.real_questions ?? [],
+            } as InterviewSession
+            handlers.onDone?.(session)
+          } else if (eventName === 'error') {
+            finished = true
+            handlers.onError?.(payload.detail || '题库生成失败')
+          }
+        }
+      }
+      if (!finished) handlers.onError?.('连接中断，题库可能未生成完成')
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return
+      handlers.onError?.(err?.message || '题库生成失败')
+    }
+  })()
+
+  return { abort: () => controller.abort() }
+}
+
+export type TutorHandlers = {
+  onToken?: (text: string) => void
+  onDone?: () => void
+  onError?: (message: string) => void
+}
+
+export function streamInterviewTutor(
+  messages: { role: string; content: string }[],
+  handlers: TutorHandlers,
+): { abort: () => void } {
+  const controller = new AbortController()
+
+  void (async () => {
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      }
+      const token = localStorage.getItem('token')
+      if (token) headers.Authorization = `Bearer ${token}`
+      const csrf = readCookie(CSRF_COOKIE_NAME)
+      if (csrf) headers[CSRF_HEADER_NAME] = csrf
+
+      const response = await fetch('/api/interview/tutor/stream', {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({ messages }),
+        signal: controller.signal,
+      })
+      if (!response.ok) {
+        let message = `请求失败（${response.status}）`
+        try {
+          const payload = await response.json()
+          if (typeof payload?.detail === 'string') message = payload.detail
+        } catch {
+          /* ignore */
+        }
+        throw new Error(message)
+      }
+      if (!response.body) throw new Error('浏览器不支持流式响应')
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const parts = buffer.split('\n\n')
+        buffer = parts.pop() ?? ''
+        for (const part of parts) {
+          const lines = part.split('\n')
+          let eventName = 'message'
+          const dataLines: string[] = []
+          for (const line of lines) {
+            if (line.startsWith('event:')) eventName = line.slice(6).trim()
+            else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
+          }
+          if (!dataLines.length) continue
+          let payload: any = {}
+          try {
+            payload = JSON.parse(dataLines.join('\n'))
+          } catch {
+            payload = {}
+          }
+          if (eventName === 'token') handlers.onToken?.(payload.content || '')
+          else if (eventName === 'done') handlers.onDone?.()
+          else if (eventName === 'error') handlers.onError?.(payload.detail || '讲解失败')
+        }
+      }
+      handlers.onDone?.()
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return
+      handlers.onError?.(err?.message || '讲解失败')
+    }
+  })()
+
+  return { abort: () => controller.abort() }
 }
 
 export async function fetchInterviewSessions(): Promise<InterviewSession[]> {
