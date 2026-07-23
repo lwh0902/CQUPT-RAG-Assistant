@@ -220,20 +220,31 @@ export interface McqItem {
   options: Record<string, string>
   answer: string
   analysis: string
+  round?: number
 }
 
 export interface QaItem {
   question: string
+  category?: string
   spoken_answer: string
   analysis: string
+}
+
+export interface InterviewReference {
+  title: string
+  url: string
 }
 
 export interface InterviewSession {
   id: string
   company: string
+  position?: string
   jd_text?: string
   resume_text?: string
   resume_filename?: string | null
+  reference_used?: boolean
+  references?: InterviewReference[]
+  report_text?: string | null
   created_at?: string
   mcq: McqItem[]
   qa: QaItem[]
@@ -256,6 +267,30 @@ export async function fetchInterviewSessions(): Promise<InterviewSession[]> {
 
 export async function fetchInterviewSession(id: string): Promise<InterviewSession> {
   const { data } = await api.get<InterviewSession>(`/interview/sessions/${id}`)
+  return data
+}
+
+export async function createWeaknessReport(
+  id: string,
+  wrongIndices: number[],
+): Promise<{ report: string }> {
+  const { data } = await api.post<{ report: string }>(
+    `/interview/sessions/${id}/report`,
+    { wrong_indices: wrongIndices },
+    { timeout: 120000 },
+  )
+  return data
+}
+
+export async function regenerateMcq(
+  id: string,
+  wrongIndices: number[],
+): Promise<{ round: number; mcq: McqItem[] }> {
+  const { data } = await api.post<{ round: number; mcq: McqItem[] }>(
+    `/interview/sessions/${id}/regenerate-mcq`,
+    { wrong_indices: wrongIndices },
+    { timeout: 120000 },
+  )
   return data
 }
 

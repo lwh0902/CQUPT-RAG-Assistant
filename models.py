@@ -125,9 +125,13 @@ class InterviewSession(Base):
         nullable=False,
     )
     company: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    position: Mapped[str] = mapped_column(String(100), nullable=False, default="")
     jd_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     resume_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     resume_filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    reference_used: Mapped[bool] = mapped_column(nullable=False, default=False)
+    reference_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    report_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
     questions: Mapped[List["InterviewQuestion"]] = relationship(
@@ -149,6 +153,7 @@ class InterviewQuestion(Base):
     )
     qtype: Mapped[str] = mapped_column(String(10), nullable=False)
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    round: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     payload_json: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 

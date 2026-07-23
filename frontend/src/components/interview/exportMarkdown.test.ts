@@ -31,5 +31,5 @@ test('markdown export contains both banks with answers and analysis', () => {
   expect(md).toContain('解析：GIL')
   expect(md).toContain('## 二、简答题（1 题）')
   expect(md).toContain('**20s 口语答案：**')
-  expect(md).toContain('**答案解析：**考察系统设计能力。')
+  expect(md).toContain('**题目讲解：**考察系统设计能力。')
 })

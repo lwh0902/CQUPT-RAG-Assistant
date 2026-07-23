@@ -187,6 +187,14 @@ CHROMA_SESSION_SUMMARY_IN_PROMPT = os.getenv(
     "CHROMA_SESSION_SUMMARY_IN_PROMPT", "false"
 ).lower() in {"1", "true", "yes", "on"}
 
+# Interview assistant: second-pass LLM review of MCQ answer keys.
+INTERVIEW_MCQ_REVIEW = os.getenv("INTERVIEW_MCQ_REVIEW", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
 # PDF chunking settings.
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 80

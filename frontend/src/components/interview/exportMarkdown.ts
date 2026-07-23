@@ -26,9 +26,10 @@ export function buildInterviewMarkdown(session: InterviewSession): string {
   lines.push(`## 二、简答题（${session.qa.length} 题）`)
   lines.push('')
   session.qa.forEach((item, index) => {
-    lines.push(`${index + 1}. ${item.question}`)
+    const category = item.category ? `【${item.category}】` : ''
+    lines.push(`${index + 1}. ${category}${item.question}`)
     lines.push(`   **20s 口语答案：**${item.spoken_answer}`)
-    lines.push(`   **答案解析：**${item.analysis}`)
+    lines.push(`   **题目讲解：**${item.analysis}`)
     lines.push('')
   })
 

@@ -106,6 +106,28 @@ def ensure_session_overflow_columns() -> None:
                 raise
 
 
+def ensure_interview_columns() -> None:
+    """Add interview-assistant v2 columns if missing (dev-friendly)."""
+    statements = [
+        "ALTER TABLE interview_sessions ADD COLUMN position VARCHAR(100) NOT NULL DEFAULT ''",
+        "ALTER TABLE interview_sessions ADD COLUMN reference_used BOOL NOT NULL DEFAULT 0",
+        "ALTER TABLE interview_sessions ADD COLUMN reference_json TEXT NULL",
+        "ALTER TABLE interview_sessions ADD COLUMN report_text TEXT NULL",
+        "ALTER TABLE interview_questions ADD COLUMN round INT NOT NULL DEFAULT 1",
+    ]
+    with engine.begin() as connection:
+        for statement in statements:
+            try:
+                connection.execute(text(statement))
+            except Exception as exc:  # noqa: BLE001
+                msg = str(exc).lower()
+                if "duplicate column" in msg or "exists" in msg or "1060" in msg:
+                    continue
+                if "doesn't exist" in msg or "1146" in msg:
+                    return
+                raise
+
+
 def ensure_database_exists() -> None:
     server_engine = create_engine(
         DATABASE_URL.set(database=None),
