@@ -439,7 +439,7 @@ export default function InterviewTutor() {
           className="tutor-fab-wrap relative flex w-[156px] flex-col items-center"
           title={t('interview.tutorTitle')}
         >
-          <span className="tutor-float inline-flex overflow-hidden rounded-[28px] border border-white/70 bg-[#d9f4ff] shadow-[0_12px_28px_rgba(56,189,248,0.28)] ring-1 ring-sky-200/60">
+          <span className="tutor-float inline-flex">
             <Fairy size={148} />
           </span>
           <span className="mt-1.5 rounded-full border border-[var(--border)] bg-[var(--surface)]/95 px-3 py-1 text-[11px] font-medium text-[var(--text-secondary)] shadow">
@@ -460,9 +460,7 @@ export default function InterviewTutor() {
         className="flex cursor-grab items-center gap-2 border-b border-[var(--border)] bg-[var(--surface)]/90 px-3 py-2 active:cursor-grabbing"
         onPointerDown={(e) => beginDrag(e, 'panel')}
       >
-        <span className="inline-flex overflow-hidden rounded-xl bg-[#d9f4ff] ring-1 ring-sky-100">
-          <Fairy size={36} />
-        </span>
+        <Fairy size={40} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">{t('interview.tutorTitle')}</p>
           <p className="truncate text-[11px] text-[var(--text-tertiary)]">
@@ -553,9 +551,7 @@ export default function InterviewTutor() {
         <div className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
           {messages.length === 0 && (
             <div className="flex items-start gap-2">
-              <span className="inline-flex shrink-0 overflow-hidden rounded-2xl bg-[#d9f4ff] ring-1 ring-sky-100">
-                <Fairy size={52} />
-              </span>
+              <Fairy size={52} className="shrink-0" />
               <div className="rounded-2xl bg-[var(--bg-secondary)] px-3 py-2.5 text-xs leading-relaxed text-[var(--text-secondary)]">
                 {t('interview.tutorWelcome')}
               </div>
